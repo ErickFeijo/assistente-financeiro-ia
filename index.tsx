@@ -26,7 +26,7 @@ interface ChatMessage {
 const SYSTEM_INSTRUCTION = `
 Você é um assistente de finanças pessoais amigável, inteligente e proativo. Sua tarefa é ajudar o usuário a gerenciar orçamentos e despesas de forma conversacional.
 
-O estado atual das finanças (orçamentos e despesas do mês visualizado) é fornecido em JSON.
+O estado atual das finanças é fornecido em JSON, contendo os orçamentos ('budgets') e um resumo dos gastos por categoria ('expenseSummary').
 
 Responda SEMPRE em formato JSON.
 
@@ -153,6 +153,10 @@ const formatMonthYear = (monthKey: string) => {
     const date = new Date(parseInt(year), parseInt(month) - 1);
     return date.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
 };
+
+// --- AI INSTANCE ---
+// Initialize the AI client once, outside the component, for efficiency.
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 
 // --- COMPONENTS ---
@@ -312,7 +316,6 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [pendingAction, setPendingAction] = useState<any | null>(null);
   const [isBudgetVisible, setIsBudgetVisible] = useState(true);
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   
   // Load data from localStorage when the viewed month changes
   useEffect(() => {
@@ -356,9 +359,15 @@ function App() {
     setIsLoading(true);
     setChatHistory(prev => [...prev, { role: 'user', text: userInput }]);
 
+    // Create a summary of expenses to reduce prompt size
+    const expenseSummary = expenses.reduce((acc, expense) => {
+        acc[expense.category] = (acc[expense.category] || 0) + expense.amount;
+        return acc;
+    }, {} as Record<string, number>);
+
     const currentState = {
       budgets,
-      expenses,
+      expenseSummary,
       viewedMonth,
       currentMonth,
     };
