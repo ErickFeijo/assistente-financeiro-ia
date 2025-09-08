@@ -4,9 +4,7 @@ const urlsToCache = [
   '/index.html',
   '/index.css',
   '/index.tsx',
-  '/icon-192x192.png',
-  '/icon-512x512.png',
-  '/apple-touch-icon.png'
+  '/icon.svg'
 ];
 
 self.addEventListener('install', event => {
