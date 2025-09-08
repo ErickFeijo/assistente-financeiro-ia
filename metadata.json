@@ -1,0 +1,5 @@
+{
+  "name": "AI Financial Assistant",
+  "description": "An application to manage personal finances using a chat interface powered by the Gemini API.",
+  "requestFramePermissions": []
+}
