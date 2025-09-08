@@ -1,0 +1,86 @@
+name: Deploy PWA to GitHub Pages
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+# Necessário para publicar no Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: 20
+  # Base path do GitHub Pages: https://<user>.github.io/<REPO_NAME>/
+  REPO_NAME: ${{ github.event.repository.name }}
+  BASE_PATH: /${{ github.event.repository.name }}/
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install deps
+        run: |
+          if [ -f package-lock.json ]; then npm ci; \
+          elif [ -f package.json ]; then npm i; \
+          else echo "No package.json found; skipping install"; fi
+
+      # Se o projeto for Vite, o --base injeta o subcaminho do GH Pages
+      - name: Build
+        run: |
+          if [ -f package.json ]; then
+            if npm run | grep -q " build"; then
+              npm run build -- --base=${{ env.BASE_PATH }} || npm run build
+            else
+              echo "No build script found; creating static dist"
+              mkdir -p dist && cp -r * dist/ || true
+            fi
+          else
+            echo "No package.json; creating static dist"
+            mkdir -p dist && cp -r * dist/ || true
+          fi
+
+      # Opcional: ajusta manifest.json se estiver na raiz ou em /public
+      - name: Patch manifest start_url/scope (optional)
+        shell: bash
+        run: |
+          set -e
+          for MANI in manifest.json public/manifest.json; do
+            if [ -f "$MANI" ]; then
+              echo "Patching $MANI with BASE_PATH=${BASE_PATH}"
+              sudo apt-get update && sudo apt-get install -y jq
+              jq --arg base "$BASE_PATH" '.start_url=$base | .scope=$base' "$MANI" > tmp.m && mv tmp.m "$MANI"
+            fi
+          done
+        continue-on-error: true
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
