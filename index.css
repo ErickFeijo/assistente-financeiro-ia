@@ -3,10 +3,10 @@
   --container-bg: #ffffff;
   --primary-text: #1e293b;
   --secondary-text: #64748b;
-  --accent-color: #3b82f6;
-  --accent-color-light: #dbeafe;
+  --accent-color: #f97316;
+  --accent-color-light: #fed7aa;
   --border-color: #e2e8f0;
-  --user-message-bg: #3b82f6;
+  --user-message-bg: #f97316;
   --user-message-text: #ffffff;
   --model-message-bg: #e2e8f0;
   --model-message-text: #1e293b;
@@ -395,11 +395,11 @@ header h1 {
 }
 
 .chat-form button:hover:not(:disabled) {
-  background-color: #2563eb;
+  background-color: #ea580c;
 }
 
 .chat-form button:disabled {
-  background-color: #93c5fd;
+  background-color: #fdba74;
   cursor: not-allowed;
 }
 

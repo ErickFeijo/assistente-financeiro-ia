@@ -156,7 +156,7 @@ const formatMonthYear = (monthKey: string) => {
 
 // --- AI INSTANCE ---
 // Initialize the AI client once, outside the component, for efficiency.
-// FIX: Per coding guidelines, the API key must be obtained from `process.env.API_KEY`.
+// FIX: Switched from import.meta.env.VITE_API_KEY to process.env.API_KEY to follow Gemini API guidelines and fix TypeScript error.
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 
