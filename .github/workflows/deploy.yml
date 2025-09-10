@@ -16,11 +16,21 @@ concurrency:
 
 env:
   NODE_VERSION: 20
-  BASE_PATH: /
+  # Para Pages de projeto: https://<user>.github.io/<repo>/
+  BASE_PATH: /${{ github.event.repository.name }}/
+  # NPM envs que o pnpm também respeita para baixar do registry oficial
+  NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
+  NPM_CONFIG_PREFER_ONLINE: true
+  NPM_CONFIG_FETCH_RETRIES: 5
+  NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: 20000
+  NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: 120000
+  NPM_CONFIG_NETWORK_CONCURRENCY: 1
+  NPM_CONFIG_STRICT_SSL: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,45 +39,55 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+          cache: '' # sem cache para evitar reuso de tarballs ruins
 
-      - name: Install deps
-        run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          else
-            npm i
-          fi
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
 
-      # Build do Vite com base sob o subcaminho do GH Pages
-      - name: Build
-        run: |
-          if npm run | grep -q " build"; then
-            npm run build -- --base=${{ env.BASE_PATH }} || npm run build
-          else
-            echo "Sem script build. Gerando dist estático." && mkdir -p dist && cp -r * dist/
-          fi
-
-      # Ajusta start_url/scope do manifest para o subcaminho (se existir)
-      - name: Patch manifest start_url/scope
-        shell: bash
+      - name: Install deps (pnpm, com retries)
         run: |
           set -e
-          sudo apt-get update >/dev/null 2>&1 && sudo apt-get install -y jq >/dev/null 2>&1
-          for MANI in dist/manifest.json dist/public/manifest.json; do
-            if [ -f "$MANI" ]; then
-              jq --arg base "${BASE_PATH}" '.start_url=$base | .scope=$base' "$MANI" > "$MANI.tmp" && mv "$MANI.tmp" "$MANI"
-            fi
+          # tente 3x
+          for i in 1 2 3; do
+            echo ">> pnpm install (tentativa $i/3)"
+            # se houver lock, respeita; se não houver, gera
+            pnpm install --reporter=silent || true
+            if [ -d node_modules ]; then break; fi
+            echo "Falhou. Limpando store e tentando de novo..."
+            pnpm store prune || true
+            rm -rf node_modules
+            pnpm cache clear --force || true
+            sleep 5
           done
-        continue-on-error: true
-
-      # Fallback de SPA para evitar 404 em rotas client-side
-      - name: Add SPA fallback
-        shell: bash
-        run: |
-          if [ -f dist/index.html ]; then
-            cp dist/index.html dist/404.html
+          # última cartada
+          if [ ! -d node_modules ]; then
+            echo ">> fallback: pnpm install novamente"
+            pnpm install --reporter=silent
           fi
+
+      - name: Build (Vite) com base do Pages
+        run: |
+          pnpm build -- --base=${{ env.BASE_PATH }} || pnpm build
+          # garantir PWA assets no dist (se estiverem na raiz ou /public)
+          for f in manifest.json sw.js apple-touch-icon.png icon-192x192.png icon-512x512.png; do
+            [ -f "$f" ] && cp -f "$f" dist/ || true
+            [ -f "public/$f" ] && cp -f "public/$f" dist/ || true
+          done
+
+      - name: Patch manifest start_url/scope
+        run: |
+          if [ -f dist/manifest.json ]; then
+            sudo apt-get update -y >/dev/null 2>&1
+            sudo apt-get install -y jq >/dev/null 2>&1
+            jq --arg base "${BASE_PATH}" '.start_url=$base | .scope=$base' dist/manifest.json > dist/manifest.tmp
+            mv dist/manifest.tmp dist/manifest.json
+          fi
+
+      - name: SPA fallback (404 -> index)
+        run: |
+          [ -f dist/index.html ] && cp dist/index.html dist/404.html || true
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
@@ -84,4 +104,3 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-
