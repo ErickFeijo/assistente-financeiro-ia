@@ -16,7 +16,8 @@ concurrency:
 
 env:
   NODE_VERSION: 20
-  BASE_PATH: /
+  # Para GitHub Pages de projeto: https://<user>.github.io/<repo>/
+  BASE_PATH: /${{ github.event.repository.name }}/
 
 jobs:
   build:
@@ -29,45 +30,58 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+          # tirei cache para evitar reuso de tarball com corrupção
+          cache: ''
 
-      - name: Install deps
-        run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          else
-            npm i
-          fi
-
-      # Build do Vite com base sob o subcaminho do GH Pages
-      - name: Build
-        run: |
-          if npm run | grep -q " build"; then
-            npm run build -- --base=${{ env.BASE_PATH }} || npm run build
-          else
-            echo "Sem script build. Gerando dist estático." && mkdir -p dist && cp -r * dist/
-          fi
-
-      # Ajusta start_url/scope do manifest para o subcaminho (se existir)
-      - name: Patch manifest start_url/scope
-        shell: bash
+      - name: Hard-reset npm & registry (avoid EINTEGRITY)
         run: |
           set -e
-          sudo apt-get update >/dev/null 2>&1 && sudo apt-get install -y jq >/dev/null 2>&1
-          for MANI in dist/manifest.json dist/public/manifest.json; do
-            if [ -f "$MANI" ]; then
-              jq --arg base "${BASE_PATH}" '.start_url=$base | .scope=$base' "$MANI" > "$MANI.tmp" && mv "$MANI.tmp" "$MANI"
-            fi
-          done
-        continue-on-error: true
+          npm --version
+          npm config set registry https://registry.npmjs.org/
+          npm config set prefer-online true
+          npm config set audit false
+          npm config set fund false
+          npm config set fetch-retries 5
+          npm config set fetch-retry-mintimeout 20000
+          npm config set fetch-retry-maxtimeout 120000
+          npm cache clean --force
+          rm -rf ~/.npm || true
 
-      # Fallback de SPA para evitar 404 em rotas client-side
-      - name: Add SPA fallback
-        shell: bash
+      - name: Install deps (with retries)
         run: |
-          if [ -f dist/index.html ]; then
-            cp dist/index.html dist/404.html
+          set -e
+          for i in 1 2 3; do
+            if [ -f package-lock.json ]; then
+              npm ci && break
+            else
+              npm install && break
+            fi
+            echo "Install failed (attempt $i). Cleaning cache and retrying..."
+            npm cache clean --force
+            sleep 3
+          done
+
+      - name: Build (Vite) with correct base
+        run: |
+          npm run build -- --base=${{ env.BASE_PATH }} || npm run build
+          # garantir que manifest/sw/ícones entrem no dist (se estiverem na raiz/public)
+          for f in manifest.json sw.js apple-touch-icon.png icon-192x192.png icon-512x512.png; do
+            [ -f "$f" ] && cp -f "$f" dist/ || true
+            [ -f "public/$f" ] && cp -f "public/$f" dist/ || true
+          done
+
+      - name: Patch manifest start_url/scope
+        run: |
+          if [ -f dist/manifest.json ]; then
+            sudo apt-get update -y >/dev/null 2>&1
+            sudo apt-get install -y jq >/dev/null 2>&1
+            jq --arg base "${BASE_PATH}" '.start_url=$base | .scope=$base' dist/manifest.json > dist/manifest.tmp
+            mv dist/manifest.tmp dist/manifest.json
           fi
+
+      - name: SPA fallback (404 -> index)
+        run: |
+          [ -f dist/index.html ] && cp dist/index.html dist/404.html || true
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
@@ -84,4 +98,3 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-
