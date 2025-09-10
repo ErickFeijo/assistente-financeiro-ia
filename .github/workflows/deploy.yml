@@ -16,7 +16,7 @@ concurrency:
 
 env:
   NODE_VERSION: 20
-  BASE_PATH: /${{ github.event.repository.name }}/
+  BASE_PATH: /
 
 jobs:
   build:
@@ -84,3 +84,4 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
