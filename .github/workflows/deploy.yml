@@ -5,7 +5,6 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
-# Necessário para publicar no Pages
 permissions:
   contents: read
   pages: write
@@ -17,9 +16,7 @@ concurrency:
 
 env:
   NODE_VERSION: 20
-  # Base path do GitHub Pages: https://<user>.github.io/<REPO_NAME>/
-  REPO_NAME: ${{ github.event.repository.name }}
-  BASE_PATH: /${{ github.event.repository.name }}/
+  BASE_PATH: /
 
 jobs:
   build:
@@ -36,38 +33,41 @@ jobs:
 
       - name: Install deps
         run: |
-          if [ -f package-lock.json ]; then npm ci; \
-          elif [ -f package.json ]; then npm i; \
-          else echo "No package.json found; skipping install"; fi
-
-      # Se o projeto for Vite, o --base injeta o subcaminho do GH Pages
-      - name: Build
-        run: |
-          if [ -f package.json ]; then
-            if npm run | grep -q " build"; then
-              npm run build -- --base=${{ env.BASE_PATH }} || npm run build
-            else
-              echo "No build script found; creating static dist"
-              mkdir -p dist && cp -r * dist/ || true
-            fi
+          if [ -f package-lock.json ]; then
+            npm ci
           else
-            echo "No package.json; creating static dist"
-            mkdir -p dist && cp -r * dist/ || true
+            npm i
           fi
 
-      # Opcional: ajusta manifest.json se estiver na raiz ou em /public
-      - name: Patch manifest start_url/scope (optional)
+      # Build do Vite com base sob o subcaminho do GH Pages
+      - name: Build
+        run: |
+          if npm run | grep -q " build"; then
+            npm run build -- --base=${{ env.BASE_PATH }} || npm run build
+          else
+            echo "Sem script build. Gerando dist estático." && mkdir -p dist && cp -r * dist/
+          fi
+
+      # Ajusta start_url/scope do manifest para o subcaminho (se existir)
+      - name: Patch manifest start_url/scope
         shell: bash
         run: |
           set -e
-          for MANI in manifest.json public/manifest.json; do
+          sudo apt-get update >/dev/null 2>&1 && sudo apt-get install -y jq >/dev/null 2>&1
+          for MANI in dist/manifest.json dist/public/manifest.json; do
             if [ -f "$MANI" ]; then
-              echo "Patching $MANI with BASE_PATH=${BASE_PATH}"
-              sudo apt-get update && sudo apt-get install -y jq
-              jq --arg base "$BASE_PATH" '.start_url=$base | .scope=$base' "$MANI" > tmp.m && mv tmp.m "$MANI"
+              jq --arg base "${BASE_PATH}" '.start_url=$base | .scope=$base' "$MANI" > "$MANI.tmp" && mv "$MANI.tmp" "$MANI"
             fi
           done
         continue-on-error: true
+
+      # Fallback de SPA para evitar 404 em rotas client-side
+      - name: Add SPA fallback
+        shell: bash
+        run: |
+          if [ -f dist/index.html ]; then
+            cp dist/index.html dist/404.html
+          fi
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
@@ -84,3 +84,4 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
