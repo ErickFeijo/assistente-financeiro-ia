@@ -1,14 +1,15 @@
 {
   "name": "Assistente Financeiro IA",
   "short_name": "Finanças IA",
-  "start_url": ".",
+  "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#f0f4f8",
   "theme_color": "#f97316",
   "description": "Gerencie suas finanças com um assistente IA pessoal.",
   "icons": [
     {
-      "src": "/icon.svg",
+      "src": "./icon.svg",
       "sizes": "any",
       "type": "image/svg+xml"
     }

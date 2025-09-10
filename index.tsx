@@ -486,5 +486,27 @@ function App() {
   );
 }
 
+// --- SERVICE WORKER REGISTRATION ---
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    const baseUrl = '/assistente-financeiro-ia/';
+    
+    // Construct the absolute URL for the Service Worker script to ensure it's loaded from the correct origin,
+    // especially in sandboxed environments where root-relative paths can be misinterpreted.
+    const swUrl = `${window.location.origin}${baseUrl}sw.js`;
+
+    // By not providing a 'scope' option, we let the browser default it to the script's directory,
+    // which is the correct behavior and avoids origin mismatch errors in this environment.
+    navigator.serviceWorker.register(swUrl)
+      .then(registration => {
+        console.log('Service Worker registered successfully with scope:', registration.scope);
+      })
+      .catch(error => {
+        console.error('Service Worker registration failed:', error);
+        console.error(`Attempted to register SW at: ${swUrl}`);
+      });
+  });
+}
+
 const root = ReactDOM.createRoot(document.getElementById('root') as HTMLElement);
 root.render(<App />);
