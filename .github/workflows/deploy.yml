@@ -16,12 +16,21 @@ concurrency:
 
 env:
   NODE_VERSION: 20
-  # Para GitHub Pages de projeto: https://<user>.github.io/<repo>/
+  # Para Pages de projeto: https://<user>.github.io/<repo>/
   BASE_PATH: /${{ github.event.repository.name }}/
+  # NPM envs que o pnpm também respeita para baixar do registry oficial
+  NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
+  NPM_CONFIG_PREFER_ONLINE: true
+  NPM_CONFIG_FETCH_RETRIES: 5
+  NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: 20000
+  NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: 120000
+  NPM_CONFIG_NETWORK_CONCURRENCY: 1
+  NPM_CONFIG_STRICT_SSL: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,41 +39,38 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          # tirei cache para evitar reuso de tarball com corrupção
-          cache: ''
+          cache: '' # sem cache para evitar reuso de tarballs ruins
 
-      - name: Hard-reset npm & registry (avoid EINTEGRITY)
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install deps (pnpm, com retries)
         run: |
           set -e
-          npm --version
-          npm config set registry https://registry.npmjs.org/
-          npm config set prefer-online true
-          npm config set audit false
-          npm config set fund false
-          npm config set fetch-retries 5
-          npm config set fetch-retry-mintimeout 20000
-          npm config set fetch-retry-maxtimeout 120000
-          npm cache clean --force
-          rm -rf ~/.npm || true
-
-      - name: Install deps (with retries)
-        run: |
-          set -e
+          # tente 3x
           for i in 1 2 3; do
-            if [ -f package-lock.json ]; then
-              npm ci && break
-            else
-              npm install && break
-            fi
-            echo "Install failed (attempt $i). Cleaning cache and retrying..."
-            npm cache clean --force
-            sleep 3
+            echo ">> pnpm install (tentativa $i/3)"
+            # se houver lock, respeita; se não houver, gera
+            pnpm install --reporter=silent || true
+            if [ -d node_modules ]; then break; fi
+            echo "Falhou. Limpando store e tentando de novo..."
+            pnpm store prune || true
+            rm -rf node_modules
+            pnpm cache clear --force || true
+            sleep 5
           done
+          # última cartada
+          if [ ! -d node_modules ]; then
+            echo ">> fallback: pnpm install novamente"
+            pnpm install --reporter=silent
+          fi
 
-      - name: Build (Vite) with correct base
+      - name: Build (Vite) com base do Pages
         run: |
-          npm run build -- --base=${{ env.BASE_PATH }} || npm run build
-          # garantir que manifest/sw/ícones entrem no dist (se estiverem na raiz/public)
+          pnpm build -- --base=${{ env.BASE_PATH }} || pnpm build
+          # garantir PWA assets no dist (se estiverem na raiz ou /public)
           for f in manifest.json sw.js apple-touch-icon.png icon-192x192.png icon-512x512.png; do
             [ -f "$f" ] && cp -f "$f" dist/ || true
             [ -f "public/$f" ] && cp -f "public/$f" dist/ || true
