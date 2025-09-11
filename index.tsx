@@ -56,12 +56,12 @@ Quando um pedido do usuário for claro e inequívoco (ex: adicionar um gasto a u
 ---
 
 FLUXO 2: CONFIRMAÇÃO (PARA SOLICITAÇÕES AMBÍGUAS OU IMPORTANTES)
-Use este fluxo quando precisar de esclarecimentos ou para ações críticas como 'virar o mês'.
+Use este fluxo quando precisar de esclarecimentos ou para ações críticas como 'virar o mès'.
 
 1. Ação inicial: 'CONFIRM_ACTION'
    -   **Payload:** 'actionToConfirm' (a ação final) e 'data'.
    -   **Response:** Uma pergunta clara ao usuário.
-   -   **Exemplo (Adivinhação de Categoria):**
+   -   **Exemplo (Adivinhação de Categoria):
      -   Usuário: "gastei 1101 no rancho" (e a categoria 'mercado' existe)
      -   Sua resposta JSON:
         {
@@ -72,8 +72,8 @@ Use este fluxo quando precisar de esclarecimentos ou para ações críticas como
           },
           "response": "Não encontrei a categoria 'rancho'. Você quis dizer 'mercado'? Posso registrar o gasto de R$ 1101 lá?"
         }
-    -  **Exemplo (Virar o Mês):**
-      - Usuário: "vamos para o próximo mês"
+    -  **Exemplo (Virar o Mès):
+      - Usuário: "vamos para o próximo mès"
       - Sua resposta JSON:
         {
           "action": "CONFIRM_ACTION",
@@ -81,27 +81,27 @@ Use este fluxo quando precisar de esclarecimentos ou para ações críticas como
             "actionToConfirm": "NEXT_MONTH",
             "data": {}
           },
-          "response": "Ok! Deseja arquivar este mês e começar um novo? Posso copiar seus orçamentos atuais para o próximo mês?"
+          "response": "Ok! Deseja arquivar este mès e começar um novo? Posso copiar seus orçamentos atuais para o próximo mès?"
         }
 
 2. Resposta do usuário à confirmação:
    - Se o usuário confirmar ('sim', 'pode copiar'), responda com a ação final ('ADD_EXPENSE', 'NEXT_MONTH', etc.).
-     - Usuário (respondendo ao pedido de virar o mês): "sim, copia os orçamentos"
+     - Usuário (respondendo ao pedido de virar o mès): "sim, copia os orçamentos"
      - Sua resposta JSON:
        {
          "action": "NEXT_MONTH",
          "payload": { "copyBudgets": true },
-         "response": "Tudo certo! Iniciando o novo mês com seus orçamentos copiados."
+         "response": "Tudo certo! Iniciando o novo mès com seus orçamentos copiados."
        }
    - Se o usuário negar, responda com 'CANCEL_ACTION'.
 
 ---
 
-FLUXO 3: VISUALIZAR OUTRO MÊS
-Quando o usuário pedir para ver dados de um mês anterior.
+FLUXO 3: VISUALIZAR OUTRO MÈS
+Quando o usuário pedir para ver dados de um mès anterior.
 
 1.  Ação: 'VIEW_PREVIOUS_MONTH'
-2.  **Payload:** 'year' e 'month' (número do mês, 1-12).
+2.  **Payload:** 'year' e 'month' (número do mès, 1-12).
 3.  **Response:** Uma mensagem indicando que você está carregando os dados.
     -   Usuário: "me mostra os gastos de junho de 2024"
     -   Sua resposta JSON:
@@ -133,11 +133,13 @@ Quando o usuário pedir ajuda para criar um orçamento (ex: "sugira um orçament
               "Lazer e Jantar Fora": 1000,
               "Cuidados Pessoais": 500,
               "Poupança/Investimentos": 2500,
-              "Emergências/Outros": 1000
+              "Emergèncias/Outros": 1000
             }
           },
-          "response": "Com certeza! Com base no seu salário de R$ 11.000, preparei uma sugestão de orçamento detalhada para você, usando categorias específicas. Dê uma olhada:\\n\\n- **Moradia:** R$ 3.000\\n- **Contas Fixas:** R$ 500\\n- **Mercado e Farmácia:** R$ 1.500\\n- **Transporte:** R$ 600\\n- **Saúde:** R$ 400\\n- **Lazer e Jantar Fora:** R$ 1.000\\n- **Cuidados Pessoais:** R$ 500\\n- **Poupança/Investimentos:** R$ 2.500\\n- **Emergências/Outros:** R$ 1.000\\n\\nO que você acha? Posso definir este como o seu orçamento para o mês?"
+          "response": "Com certeza! Com base no seu salário de R$ 11.000, preparei uma sugestão de orçamento detalhada para você, usando categorias específicas. Dè uma olhada:\n\n- **Moradia:** R$ 3.000\n- **Contas Fixas:** R$ 500\n- **Mercado e Farmácia:** R$ 1.500\n- **Transporte:** R$ 600\n- **Saúde:** R$ 400\n- **Lazer e Jantar Fora:** R$ 1.000\n- **Cuidados Pessoais:** R$ 500\n- **Poupança/Investimentos:** R$ 2.500\n- **Emergèncias/Outros:** R$ 1.000\n\nO que você acha? Posso definir este como o seu orçamento para o mès?"
         }
+
+---
 
 --- REGRAS IMPORTANTES ---
 - SEJA PROATIVO, NÃO PASSIVO: Se o usuário pedir uma sugestão, CRIE E APRESENTE UMA. Não devolva a pergunta.
@@ -157,7 +159,7 @@ const formatMonthYear = (monthKey: string) => {
 // --- AI INSTANCE ---
 // Initialize the AI client once, outside the component, for efficiency.
 // FIX: Switched from import.meta.env.VITE_API_KEY to process.env.API_KEY to follow Gemini API guidelines and fix TypeScript error.
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const ai = new GoogleGenAI({ apiKey: "AIzaSyBodxRZLyiZuSlCE4HBSv2QtmGQnk71Umc" });
 
 
 // --- COMPONENTS ---
@@ -167,7 +169,7 @@ const ExpenseList = ({ expenses }: { expenses: Expense[] }) => {
   if (expenses.length === 0) {
     return (
       <div className="expense-list">
-        <p className="empty-list-message">Nenhum lançamento neste mês.</p>
+        <p className="empty-list-message">Nenhum lançamento neste mès.</p>
       </div>
     );
   }
@@ -175,7 +177,7 @@ const ExpenseList = ({ expenses }: { expenses: Expense[] }) => {
   return (
     <div className="expense-list">
       <div className="expense-list-header">
-        <h3>Lançamentos do Mês</h3>
+        <h3>Lançamentos do Mès</h3>
         <button onClick={() => setIsExpanded(!isExpanded)} className="toggle-expenses-btn">
           {isExpanded ? 'Ocultar' : 'Ver Tudo'}
         </button>
@@ -215,9 +217,9 @@ const BudgetDisplay = ({ budgets, expenses, viewedMonth, onMonthChange, currentM
   return (
     <div className={`budget-display ${isCollapsed ? 'collapsed' : ''}`}>
        <div className="month-navigator">
-        <button onClick={() => onMonthChange('prev')} aria-label="Mês anterior">&lt;</button>
+        <button onClick={() => onMonthChange('prev')} aria-label="Mès anterior">&lt;</button>
         <h2>Orçamento de {formattedMonth.charAt(0).toUpperCase() + formattedMonth.slice(1)}</h2>
-        <button onClick={() => onMonthChange('next')} disabled={isCurrentMonth} aria-label="Próximo mês">&gt;</button>
+        <button onClick={() => onMonthChange('next')} disabled={isCurrentMonth} aria-label="Próximo mès">&gt;</button>
       </div>
       {budgetKeys.length === 0 && expenses.length === 0 ? (
          <div className="empty-state">
@@ -280,7 +282,7 @@ const ChatInterface = ({ messages, onSendMessage, isLoading }: { messages: ChatM
       <div className="chat-history" ref={chatHistoryRef}>
         {messages.map((msg, index) => (
           <div key={index} className={`message ${msg.role}`}>
-            {msg.text.split('\\n').map((line, i) => <p key={i}>{line}</p>)}
+            {msg.text.split('\n').map((line, i) => <p key={i}>{line}</p>)}
           </div>
         ))}
         {isLoading && (
@@ -489,21 +491,12 @@ function App() {
 // --- SERVICE WORKER REGISTRATION ---
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    const baseUrl = '/assistente-financeiro-ia/';
-    
-    // Construct the absolute URL for the Service Worker script to ensure it's loaded from the correct origin,
-    // especially in sandboxed environments where root-relative paths can be misinterpreted.
-    const swUrl = `${window.location.origin}${baseUrl}sw.js`;
-
-    // By not providing a 'scope' option, we let the browser default it to the script's directory,
-    // which is the correct behavior and avoids origin mismatch errors in this environment.
-    navigator.serviceWorker.register(swUrl)
+    navigator.serviceWorker.register('/sw.js')
       .then(registration => {
         console.log('Service Worker registered successfully with scope:', registration.scope);
       })
       .catch(error => {
         console.error('Service Worker registration failed:', error);
-        console.error(`Attempted to register SW at: ${swUrl}`);
       });
   });
 }
