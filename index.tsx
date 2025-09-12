@@ -197,7 +197,23 @@ const ExpenseList = ({ expenses }: { expenses: Expense[] }) => {
   );
 };
 
-const BudgetDisplay = ({ budgets, expenses, viewedMonth, onMonthChange, currentMonth, isCollapsed }: { budgets: Budget; expenses: Expense[]; viewedMonth: string; onMonthChange: (direction: 'prev' | 'next') => void; currentMonth: string; isCollapsed: boolean }) => {
+const BudgetDisplay = ({
+  budgets,
+  expenses,
+  viewedMonth,
+  onMonthChange,
+  currentMonth,
+  activeView,
+  setActiveView
+}: {
+  budgets: Budget;
+  expenses: Expense[];
+  viewedMonth: string;
+  onMonthChange: (direction: 'prev' | 'next') => void;
+  currentMonth: string;
+  activeView: string | null;
+  setActiveView: (view: string | null) => void;
+}) => {
   const calculateSpent = (category: string) => {
     return expenses
       .filter(e => e.category.toLowerCase() === category.toLowerCase())
@@ -209,27 +225,42 @@ const BudgetDisplay = ({ budgets, expenses, viewedMonth, onMonthChange, currentM
     if (percentage > 70) return 'warning';
     return '';
   };
-  
+
   const budgetKeys = Object.keys(budgets);
   const formattedMonth = formatMonthYear(viewedMonth);
   const isCurrentMonth = viewedMonth === currentMonth;
 
+  const handleToggle = (view: string) => {
+    setActiveView(activeView === view ? null : view);
+  };
+
   return (
-    <div className={`budget-display ${isCollapsed ? 'collapsed' : ''}`}>
-       <div className="month-navigator">
-        <button onClick={() => onMonthChange('prev')} aria-label="Mès anterior">&lt;</button>
-        <h2>Orçamento de {formattedMonth.charAt(0).toUpperCase() + formattedMonth.slice(1)}</h2>
-        <button onClick={() => onMonthChange('next')} disabled={isCurrentMonth} aria-label="Próximo mès">&gt;</button>
+    <div className={`budget-display ${activeView ? '' : 'collapsed'}`}>
+      <div className="month-navigator">
+        <button onClick={() => onMonthChange('prev')} aria-label="Mès anterior"></button>
+        <h2>{formattedMonth}</h2>
+        <button onClick={() => onMonthChange('next')} disabled={isCurrentMonth} aria-label="Próximo mès"></button>
       </div>
-      {budgetKeys.length === 0 && expenses.length === 0 ? (
-         <div className="empty-state">
-           <p>Nenhum dado para {formattedMonth}.</p>
-           {viewedMonth === getMonthYear() && <p>Use o chat abaixo para começar!</p>}
-        </div>
-      ) : (
-        <>
-          <div className="budget-items-container">
-            {budgetKeys.map(category => {
+
+      <div className="view-toggle-buttons">
+        <button
+          onClick={() => handleToggle('summary')}
+          className={activeView === 'summary' ? 'active' : ''}
+        >
+          Resumo
+        </button>
+        <button
+          onClick={() => handleToggle('entries')}
+          className={activeView === 'entries' ? 'active' : ''}
+        >
+          Lançamentos
+        </button>
+      </div>
+
+      {activeView === 'summary' && (
+        <div className="budget-items-container">
+          {budgetKeys.length > 0 ? (
+            budgetKeys.map(category => {
               const total = budgets[category];
               const spent = calculateSpent(category);
               const percentage = total > 0 ? (spent / total) * 100 : 0;
@@ -243,17 +274,26 @@ const BudgetDisplay = ({ budgets, expenses, viewedMonth, onMonthChange, currentM
                     <div
                       className={`progress-bar-fill ${getProgressColor(percentage)}`}
                       style={{ width: `${Math.min(percentage, 100)}%` }}
-                      aria-valuenow={percentage}
-                      aria-valuemin={0}
-                      aria-valuemax={100}
                     ></div>
                   </div>
                 </div>
               );
-            })}
-          </div>
-          <ExpenseList expenses={expenses} />
-        </>
+            })
+          ) : (
+            <div className="empty-state">
+              <p>Nenhum orçamento definido para {formattedMonth}.</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeView === 'entries' && <ExpenseList expenses={expenses} />}
+
+      {!activeView && budgetKeys.length === 0 && expenses.length === 0 && (
+        <div className="empty-state">
+          <p>Nenhum dado para {formattedMonth}.</p>
+          {viewedMonth === getMonthYear() && <p>Use o chat abaixo para começar!</p>}
+        </div>
       )}
     </div>
   );
@@ -318,7 +358,7 @@ function App() {
   ]);
   const [isLoading, setIsLoading] = useState(false);
   const [pendingAction, setPendingAction] = useState<any | null>(null);
-  const [isBudgetVisible, setIsBudgetVisible] = useState(true);
+  const [activeView, setActiveView] = useState<string | null>('summary'); // 'summary', 'entries', or null
   
   // Load data from localStorage when the viewed month changes
   useEffect(() => {
@@ -467,17 +507,15 @@ function App() {
     <div className="app-container">
       <header>
         <h1>Assistente Financeiro IA</h1>
-        <button onClick={() => setIsBudgetVisible(!isBudgetVisible)} className="toggle-budget-btn" aria-label="Mostrar/Ocultar resumo do orçamento">
-            {isBudgetVisible ? 'Ocultar Resumo' : 'Ver Resumo'}
-        </button>
       </header>
-      <BudgetDisplay 
-        budgets={budgets} 
-        expenses={expenses} 
+      <BudgetDisplay
+        budgets={budgets}
+        expenses={expenses}
         viewedMonth={viewedMonth}
         onMonthChange={handleMonthChange}
         currentMonth={currentMonth}
-        isCollapsed={!isBudgetVisible}
+        activeView={activeView}
+        setActiveView={setActiveView}
       />
       <ChatInterface
         messages={chatHistory}
