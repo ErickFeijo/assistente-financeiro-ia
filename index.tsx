@@ -150,18 +150,18 @@ Quando o usuário pedir ajuda para criar um orçamento (ex: "sugira um orçament
           "payload": {
             "actionToConfirm": "SET_BUDGET",
             "data": {
-              "Moradia (Aluguel/Financiamento)": 3000,
-              "Contas Fixas (Luz, Água, Internet)": 500,
-              "Mercado e Farmácia": 1500,
-              "Transporte": 600,
-              "Saúde (Plano/Consultas)": 400,
-              "Lazer e Jantar Fora": 1000,
-              "Cuidados Pessoais": 500,
-              "Poupança/Investimentos": 2500,
-              "Emergèncias/Outros": 1000
+              "Hotéis 🏠": 3000,
+              "Contas 💡": 500,
+              "Mercado 🛒": 1500,
+              "Transporte 🚗": 600,
+              "Saúde 🏥": 400,
+              "Lazer 🎉": 1000,
+              "Cuidados Pessoais 💄": 500,
+              "Investimentos 📈": 2500,
+              "Emergências 🆘": 1000
             }
           },
-          "response": "Com certeza! Com base no seu salário de R$ 11.000, preparei uma sugestão de orçamento detalhada para você, usando categorias específicas. Dè uma olhada:\n\n- **Moradia:** R$ 3.000\n- **Contas Fixas:** R$ 500\n- **Mercado e Farmácia:** R$ 1.500\n- **Transporte:** R$ 600\n- **Saúde:** R$ 400\n- **Lazer e Jantar Fora:** R$ 1.000\n- **Cuidados Pessoais:** R$ 500\n- **Poupança/Investimentos:** R$ 2.500\n- **Emergèncias/Outros:** R$ 1.000\n\nO que você acha? Posso definir este como o seu orçamento para o mès?"
+          "response": "Com certeza! Com base no seu salário de R$ 11.000, preparei uma sugestão de orçamento detalhada para você, usando categorias específicas. Dè uma olhada:\n\n- **Hotéis 🏠:** R$ 3.000\n- **Contas 💡:** R$ 500\n- **Mercado 🛒:** R$ 1.500\n- **Transporte 🚗:** R$ 600\n- **Saúde 🏥:** R$ 400\n- **Lazer 🎉:** R$ 1.000\n- **Cuidados Pessoais 💄:** R$ 500\n- **Investimentos 📈:** R$ 2.500\n- **Emergências 🆘:** R$ 1.000\n\nO que você acha? Posso definir este como o seu orçamento para o mès?"
         }
 
 --- 
@@ -187,6 +187,38 @@ Quando o usuário enviar uma imagem, extraia as informações e peça confirmaç
     -   Se o usuário confirmar, proceda com a ação 'ADD_EXPENSE'.
     -   Se o usuário corrigir ("não, foi farmácia"), atualize a categoria e adicione o gasto.
     -   Se o usuário negar, cancele com 'CANCEL_ACTION'.
+
+---
+
+FLUXO 6: EXCLUSÃO DE DADOS
+Quando o usuário pedir para excluir dados, categorias ou limpar tudo, você deve confirmar a ação antes de executá-la.
+
+1.  **Ação de Confirmação:** Use 'CONFIRM_ACTION' para pedir confirmação ao usuário.
+2.  **Payload:** 'actionToConfirm' será uma das seguintes ações:
+    - 'CLEAR_ALL_DATA': Para excluir todos os dados
+    - 'DELETE_CATEGORY': Para excluir uma categoria específica
+3.  **Response:** Pergunte ao usuário se ele tem certeza da ação.
+    -   Exemplo (usuário pede para excluir tudo):
+        {
+          "action": "CONFIRM_ACTION",
+          "payload": {
+            "actionToConfirm": "CLEAR_ALL_DATA",
+            "data": {}
+          },
+          "response": "Tem certeza que deseja excluir todos os dados? Esta ação não pode ser desfeita."
+        }
+    -   Exemplo (usuário pede para excluir categoria "mercado"):
+        {
+          "action": "CONFIRM_ACTION",
+          "payload": {
+            "actionToConfirm": "DELETE_CATEGORY",
+            "data": { "category": "mercado" }
+          },
+          "response": "Tem certeza que deseja excluir a categoria 'mercado' e todos os seus dados? Esta ação não pode ser desfeita."
+        }
+4.  **Resposta do Usuário:**
+    -   Se o usuário confirmar, responda com a ação final ('CLEAR_ALL_DATA' ou 'DELETE_CATEGORY').
+    -   Se o usuário negar, responda com 'CANCEL_ACTION'.
 
 --- REGRAS IMPORTANTES ---
 - SEJA PROATIVO, NÃO PASSIVO: Se o usuário pedir uma sugestão, CRIE E APRESENTE UMA. Não devolva a pergunta.
@@ -605,6 +637,42 @@ function App() {
             setViewedMonth(`${pYear}-${pMonth}`);
             setPendingAction(null);
             break;
+        case 'CLEAR_ALL_DATA':
+          // Limpar todos os dados do localStorage
+          const keysToRemove = [];
+          for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && (key.startsWith('budgets_') || key.startsWith('expenses_'))) {
+              keysToRemove.push(key);
+            }
+          }
+          keysToRemove.forEach(key => localStorage.removeItem(key));
+          
+          // Resetar o estado da aplicação
+          setBudgets({});
+          setExpenses([]);
+          setChatHistory([{ role: 'model', text: 'Olá! Sou seu assistente financeiro.' }]);
+          
+          // Voltar para o mês atual
+          const currentMonthKey = getMonthYear();
+          setViewedMonth(currentMonthKey);
+          setCurrentMonth(currentMonthKey);
+          setPendingAction(null);
+          break;
+        case 'DELETE_CATEGORY':
+          // Excluir uma categoria específica
+          const { category: categoryToDelete } = payload;
+          
+          // Remover a categoria dos orçamentos
+          const updatedBudgets = { ...budgets };
+          delete updatedBudgets[categoryToDelete];
+          setBudgets(updatedBudgets);
+          
+          // Remover os gastos da categoria
+          const updatedExpenses = expenses.filter(expense => expense.category.toLowerCase() !== categoryToDelete.toLowerCase());
+          setExpenses(updatedExpenses);
+          setPendingAction(null);
+          break;
         case 'CANCEL_ACTION':
           setPendingAction(null);
           break;
