@@ -22,6 +22,7 @@ interface Expense {
 interface ChatMessage {
   role: 'user' | 'model';
   text: string;
+  images?: string[];
 }
 
 // --- HELPERS ---
@@ -165,6 +166,27 @@ Quando o usuário pedir ajuda para criar um orçamento (ex: "sugira um orçament
 
 --- 
 
+FLUXO 5: PROCESSAMENTO DE IMAGEM (NOTA FISCAL)
+Quando o usuário enviar uma imagem, extraia as informações e peça confirmação.
+
+1.  **Análise da Imagem:** Extraia o valor total e sugira uma categoria provável (ex: 'Mercado', 'Restaurante', 'Transporte').
+2.  **Ação de Confirmação:** Use 'CONFIRM_ACTION'.
+    -   **Payload:** 'actionToConfirm' será 'ADD_EXPENSE', e 'data' conterá a categoria e o valor extraídos.
+    -   **Response:** Apresente os dados extraídos e peça a confirmação do usuário.
+    -   **Exemplo (Usuário envia foto de nota de supermercado):**
+        -   Sua resposta JSON:
+            {
+              "action": "CONFIRM_ACTION",
+              "payload": {
+                "actionToConfirm": "ADD_EXPENSE",
+                "data": [{ "category": "Mercado", "amount": 185.70 }]
+              },
+              "response": "Analisei a nota fiscal e encontrei um total de R$ 185,70. A categoria parece ser 'Mercado'. Está correto? Posso adicionar este gasto?"
+            }
+3.  **Resposta do Usuário:**
+    -   Se o usuário confirmar, proceda com a ação 'ADD_EXPENSE'.
+    -   Se o usuário corrigir ("não, foi farmácia"), atualize a categoria e adicione o gasto.
+    -   Se o usuário negar, cancele com 'CANCEL_ACTION'.
 
 --- REGRAS IMPORTANTES ---
 - SEJA PROATIVO, NÃO PASSIVO: Se o usuário pedir uma sugestão, CRIE E APRESENTE UMA. Não devolva a pergunta.
@@ -178,6 +200,20 @@ const PlusIcon = () => (
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
         <path d="M5 12h14"/>
         <path d="M12 5v14"/>
+    </svg>
+);
+
+const CameraIcon = () => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/>
+        <circle cx="12" cy="13" r="3"/>
+    </svg>
+);
+
+const SendIcon = () => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M22 2 11 13"/>
+        <path d="m22 2-7 20-4-9-9-4 20-7z"/>
     </svg>
 );
 
@@ -303,7 +339,7 @@ const SummaryView = ({ budgets, expenses, viewedMonth }: { budgets: Budget, expe
   );
 };
 
-const AssistantView = ({ messages, onSendMessage, isLoading }: { messages: ChatMessage[], onSendMessage: (msg: string) => void, isLoading: boolean }) => {
+const AssistantView = ({ messages, onSendMessage, isLoading }: { messages: ChatMessage[], onSendMessage: (msg: string, images?: File[]) => void, isLoading: boolean }) => {
   const [input, setInput] = useState('');
   const handleSuggestionClick = (suggestion: string) => {
     setInput(suggestion);
@@ -343,8 +379,10 @@ const ExpenseList = ({ expenses }: { expenses: Expense[] }) => {
   );
 };
 
-const ChatInterface = ({ messages, onSendMessage, isLoading, input, setInput }: { messages: ChatMessage[]; onSendMessage: (msg: string) => void; isLoading: boolean; input: string; setInput: (value: string) => void; }) => {
+const ChatInterface = ({ messages, onSendMessage, isLoading, input, setInput }: { messages: ChatMessage[]; onSendMessage: (msg: string, images?: File[]) => void; isLoading: boolean; input: string; setInput: (value: string) => void; }) => {
   const chatHistoryRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [selectedImages, setSelectedImages] = useState<File[]>([]);
 
   useEffect(() => { if (chatHistoryRef.current) { chatHistoryRef.current.scrollTop = chatHistoryRef.current.scrollHeight; } }, [messages, isLoading]);
 
@@ -364,10 +402,26 @@ const ChatInterface = ({ messages, onSendMessage, isLoading, input, setInput }: 
     }
   };
 
+  const handleImageSelection = (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (event.target.files) {
+      const files = Array.from(event.target.files);
+      setSelectedImages(files);
+      // Automatically send the message if there's no text input
+      if (!input.trim()) {
+        onSendMessage("", files);
+        setInput('');
+        setSelectedImages([]);
+        if(fileInputRef.current) fileInputRef.current.value = '';
+      }
+    }
+  };
+
   const handleSubmit = () => {
-    if (input.trim() && !isLoading) {
-      onSendMessage(input.trim());
+    if ((input.trim() || selectedImages.length > 0) && !isLoading) {
+      onSendMessage(input.trim(), selectedImages);
       setInput('');
+      setSelectedImages([]);
+      if(fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
@@ -375,11 +429,30 @@ const ChatInterface = ({ messages, onSendMessage, isLoading, input, setInput }: 
     <div className="chat-container">
       <div className="chat-history" ref={chatHistoryRef}>
         {messages.map((msg, index) => (
-          <div key={index} className={`message ${msg.role}`}>{msg.text.split('\n').map((line, i) => <p key={i}>{line}</p>)}</div>
+          <div key={index} className={`message ${msg.role}`}>
+            {msg.text.split('\n').map((line, i) => <p key={i}>{line}</p>)}
+            {msg.images && (
+              <div className="message-images">
+                {msg.images.map((img, i) => <img key={i} src={img} alt="Uploaded content" />)}
+              </div>
+            )}
+          </div>
         ))}
-        {isLoading && <div className="message model loading"><div className="dot-flashing"></div></div>}
+        {isLoading && <div className="message model thinking">...</div>}
       </div>
       <form onSubmit={(e) => { e.preventDefault(); handleSubmit(); }} className="chat-form">
+        <input
+          type="file"
+          ref={fileInputRef}
+          onChange={handleImageSelection}
+          multiple
+          accept="image/*"
+          style={{ display: 'none' }}
+          id="image-upload"
+        />
+        <button type="button" className="icon-button" onClick={() => fileInputRef.current?.click()} aria-label="Adicionar imagem">
+          <CameraIcon />
+        </button>
         <textarea
           ref={textareaRef}
           value={input}
@@ -390,7 +463,9 @@ const ChatInterface = ({ messages, onSendMessage, isLoading, input, setInput }: 
           disabled={isLoading}
           rows={1}
         />
-        <button type="submit" disabled={isLoading || !input.trim()}>Enviar</button>
+        <button type="submit" className="icon-button" disabled={isLoading || (!input.trim() && selectedImages.length === 0)}>
+          <SendIcon />
+        </button>
       </form>
     </div>
   );
@@ -427,9 +502,24 @@ function App() {
     setViewedMonth(newMonthKey);
   };
 
-   const handleSendMessage = async (userInput: string) => {
+   const fileToGenerativePart = async (file: File) => {
+    const base64EncodedDataPromise = new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
+      reader.readAsDataURL(file);
+    });
+    return {
+      inlineData: { data: await base64EncodedDataPromise, mimeType: file.type },
+    };
+  };
+
+   const handleSendMessage = async (userInput: string, images?: File[]) => {
     setIsLoading(true);
-    setChatHistory(prev => [...prev, { role: 'user', text: userInput }]);
+
+    const imageParts = images ? await Promise.all(images.map(fileToGenerativePart)) : [];
+    const imageUrls = images ? images.map(file => URL.createObjectURL(file)) : [];
+
+    setChatHistory(prev => [...prev, { role: 'user', text: userInput, images: imageUrls }]);
 
     // Create a summary of expenses to reduce prompt size
     const expenseSummary = expenses.reduce((acc, expense) => {
@@ -460,9 +550,14 @@ function App() {
     }
 
     try {
+      const contents = [
+        ...imageParts,
+        { text: prompt }
+      ];
+
       const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
-        contents: prompt,
+        contents: contents,
         config: {
           systemInstruction: SYSTEM_INSTRUCTION,
           responseMimeType: 'application/json',

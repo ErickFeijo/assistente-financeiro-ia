@@ -97,6 +97,11 @@ body {
 .chat-form textarea:focus { border-color: var(--accent-color); }
 .chat-form button { padding: 0.75rem 1.5rem; background-color: var(--accent-color); color: white; border: none; border-radius: 20px; font-size: 1rem; font-weight: 600; cursor: pointer; transition: background-color 0.2s; align-self: flex-end; }
 .chat-form button:disabled { background-color: var(--accent-color-light); cursor: not-allowed; }
+.chat-form .icon-button { padding: 0; width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.chat-form .icon-button svg { width: 24px; height: 24px; }
+
+.message-images { display: flex; gap: 0.5rem; margin-top: 0.5rem; flex-wrap: wrap; }
+.message-images img { max-width: 100px; max-height: 100px; border-radius: 8px; object-fit: cover; }
 
 /* Expense List */
 .expense-list ul { list-style-type: none; }
@@ -119,4 +124,19 @@ body {
 /* Responsive */
 @media (max-width: 640px) {
     .kpi-container { flex-direction: column; }
+}
+
+/* Thinking Animation */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+.message.model.thinking {
+  animation: pulse 1.5s infinite ease-in-out;
+  min-height: 45px;
 }
