@@ -215,8 +215,8 @@ const SegmentedControl = ({ selected, onSelect }: { selected: MainView, onSelect
   );
 };
 
-const KpiCard = ({ title, value }: { title: string, value: string }) => (
-    <div className="kpi-card">
+const KpiCard = ({ title, value, highlight = false }: { title: string, value: string, highlight?: boolean }) => (
+    <div className={`kpi-card ${highlight ? 'kpi-card-highlight' : ''}`}>
         <span className="kpi-title">{title}</span>
         <span className="kpi-value">{value}</span>
     </div>
@@ -241,7 +241,6 @@ const CategoryCard = ({ category, budget, spent }: { category: string, budget: n
     return (
         <div className="category-card p-4 shadow-sm">
             <div className="card-header">
-                <span className="category-icon-placeholder"></span>
                 <span className="category-title">{category}</span>
             </div>
             <div className="progress-bar-container">
@@ -286,13 +285,17 @@ const SummaryView = ({ budgets, expenses, viewedMonth }: { budgets: Budget, expe
 
   return (
     <div className="view-container summary-view">
-        <div className="kpi-container">
-            <KpiCard title="Gasto no mês" value={formatCurrency(totalSpent)} />
-            <KpiCard title="Orçado" value={formatCurrency(totalBudget)} />
-            <KpiCard title="Disponível" value={formatCurrency(totalAvailable)} />
+      <div className="kpi-container">
+        <div className="kpi-row">
+          <KpiCard title="Gasto no mês" value={formatCurrency(totalSpent)} />
+          <KpiCard title="Orçado" value={formatCurrency(totalBudget)} />
         </div>
-        <div className="category-cards-container gap-3">
-            {budgetKeys.map(category => (
+        <div className="kpi-row">
+          <KpiCard title="Ainda tem" value={formatCurrency(totalAvailable)} highlight />
+        </div>
+      </div>
+      <div className="category-cards-container gap-3">
+        {budgetKeys.map(category => (
                 <CategoryCard key={category} category={category} budget={budgets[category]} spent={calculateSpentPerCategory(category)} />
             ))}
         </div>
@@ -301,15 +304,20 @@ const SummaryView = ({ budgets, expenses, viewedMonth }: { budgets: Budget, expe
 };
 
 const AssistantView = ({ messages, onSendMessage, isLoading }: { messages: ChatMessage[], onSendMessage: (msg: string) => void, isLoading: boolean }) => {
+  const [input, setInput] = useState('');
+  const handleSuggestionClick = (suggestion: string) => {
+    setInput(suggestion);
+  };
+
   return (
     <div className="view-container assistant-view">
         <div className="assistant-greeting"><p>Olá! Como posso ajudar hoje?</p></div>
         <div className="suggestion-chips">
-            <button>Definir orçamentos</button>
-            <button>Adicionar gasto R$50</button>
-            <button>Ver categorias no vermelho</button>
+            <button onClick={() => handleSuggestionClick('Definir orçamentos para o mês')}>Definir orçamentos</button>
+            <button onClick={() => handleSuggestionClick('Adicionar gasto de R$50 em mercado')}>Adicionar gasto R$50</button>
+            <button onClick={() => handleSuggestionClick('Quais categorias estão no vermelho?')}>Ver categorias no vermelho</button>
         </div>
-        <ChatInterface messages={messages} onSendMessage={onSendMessage} isLoading={isLoading} />
+        <ChatInterface messages={messages} onSendMessage={onSendMessage} isLoading={isLoading} input={input} setInput={setInput} />
     </div>
   );
 };
@@ -335,15 +343,32 @@ const ExpenseList = ({ expenses }: { expenses: Expense[] }) => {
   );
 };
 
-const ChatInterface = ({ messages, onSendMessage, isLoading }: { messages: ChatMessage[]; onSendMessage: (msg: string) => void; isLoading: boolean; }) => {
-  const [input, setInput] = useState('');
+const ChatInterface = ({ messages, onSendMessage, isLoading, input, setInput }: { messages: ChatMessage[]; onSendMessage: (msg: string) => void; isLoading: boolean; input: string; setInput: (value: string) => void; }) => {
   const chatHistoryRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { if (chatHistoryRef.current) { chatHistoryRef.current.scrollTop = chatHistoryRef.current.scrollHeight; } }, [messages, isLoading]);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (input.trim() && !isLoading) { onSendMessage(input.trim()); setInput(''); }
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
+    }
+  }, [input]);
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit();
+    }
+  };
+
+  const handleSubmit = () => {
+    if (input.trim() && !isLoading) {
+      onSendMessage(input.trim());
+      setInput('');
+    }
   };
 
   return (
@@ -354,8 +379,17 @@ const ChatInterface = ({ messages, onSendMessage, isLoading }: { messages: ChatM
         ))}
         {isLoading && <div className="message model loading"><div className="dot-flashing"></div></div>}
       </div>
-      <form onSubmit={handleSubmit} className="chat-form">
-        <input type="text" value={input} onChange={(e) => setInput(e.target.value)} placeholder="Digite seu comando..." aria-label="Chat input" disabled={isLoading} />
+      <form onSubmit={(e) => { e.preventDefault(); handleSubmit(); }} className="chat-form">
+        <textarea
+          ref={textareaRef}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Digite seu comando..."
+          aria-label="Chat input"
+          disabled={isLoading}
+          rows={1}
+        />
         <button type="submit" disabled={isLoading || !input.trim()}>Enviar</button>
       </form>
     </div>
@@ -393,7 +427,110 @@ function App() {
     setViewedMonth(newMonthKey);
   };
 
-  const handleSendMessage = async (userInput: string) => { /* (Omitted for brevity) */ };
+   const handleSendMessage = async (userInput: string) => {
+    setIsLoading(true);
+    setChatHistory(prev => [...prev, { role: 'user', text: userInput }]);
+
+    // Create a summary of expenses to reduce prompt size
+    const expenseSummary = expenses.reduce((acc, expense) => {
+        acc[expense.category] = (acc[expense.category] || 0) + expense.amount;
+        return acc;
+    }, {} as Record<string, number>);
+
+    const currentState = {
+      budgets,
+      expenseSummary,
+      viewedMonth,
+      currentMonth,
+    };
+
+    let prompt;
+    if (pendingAction) {
+        prompt = `
+          Contexto: O usuário está respondendo a uma pergunta de confirmação.
+          Ação pendente: ${JSON.stringify(pendingAction)}
+          Estado atual: ${JSON.stringify(currentState)}
+          Mensagem do usuário: "${userInput}"
+        `;
+    } else {
+        prompt = `
+          Estado atual: ${JSON.stringify(currentState)}
+          Mensagem do usuário: "${userInput}"
+        `;
+    }
+
+    try {
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: prompt,
+        config: {
+          systemInstruction: SYSTEM_INSTRUCTION,
+          responseMimeType: 'application/json',
+        },
+      });
+
+      const aiResponseText = response.text;
+      const aiResponseJson = JSON.parse(aiResponseText);
+      
+      const { action, payload, response: textResponse } = aiResponseJson;
+
+      switch (action) {
+        case 'CONFIRM_ACTION':
+          setPendingAction(payload);
+          break;
+        case 'SET_BUDGET':
+          setBudgets(prev => ({ ...prev, ...payload }));
+          setPendingAction(null);
+          break;
+        case 'ADD_EXPENSE':
+          const newExpenses: Expense[] = payload.map((exp: { category: string, amount: number }) => ({
+            ...exp,
+            date: new Date().toISOString(),
+          }));
+          setExpenses(prev => [...prev, ...newExpenses]);
+          setPendingAction(null);
+          break;
+        case 'NEXT_MONTH':
+            const [year, month] = viewedMonth.split('-').map(Number);
+            const nextDate = new Date(year, month, 1);
+            const newMonthKey = `${nextDate.getFullYear()}-${nextDate.getMonth() + 1}`;
+            
+            if (payload.copyBudgets) {
+              const currentBudgets = localStorage.getItem(`budgets_${viewedMonth}`);
+              if(currentBudgets) {
+                  localStorage.setItem(`budgets_${newMonthKey}`, currentBudgets);
+              }
+            }
+            setViewedMonth(newMonthKey);
+            setCurrentMonth(newMonthKey); // Also update the current month context
+            setPendingAction(null);
+            break;
+        case 'VIEW_PREVIOUS_MONTH':
+            const { year: pYear, month: pMonth } = payload;
+            setViewedMonth(`${pYear}-${pMonth}`);
+            setPendingAction(null);
+            break;
+        case 'CANCEL_ACTION':
+          setPendingAction(null);
+          break;
+        case 'GREETING':
+        case 'UNKNOWN':
+        default:
+          setPendingAction(null);
+          break;
+      }
+
+      setChatHistory(prev => [...prev, { role: 'model', text: textResponse }]);
+
+    } catch (error) {
+      console.error("Error calling Gemini API:", error);
+      const errorMessage = "Desculpe, não consegui processar sua solicitação. Tente novamente.";
+      setChatHistory(prev => [...prev, { role: 'model', text: errorMessage }]);
+      setPendingAction(null);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const renderMainView = () => {
     switch (mainView) {
