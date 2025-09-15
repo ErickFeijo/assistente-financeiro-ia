@@ -458,7 +458,7 @@ const AssistantView = ({ messages, onSendMessage, isLoading }: { messages: ChatM
         <div className="assistant-greeting"><p>Olá! Como posso ajudar hoje?</p></div>
         <div className="suggestion-chips">
             <button onClick={(e) => handleSuggestionClick('Definir orçamentos para o mês', e)}>Definir orçamentos</button>
-            <button onClick={(e) => handleSuggestionClick('Adicionar gasto de R$50 em mercado', e)}>Adicionar gasto R$50</button>
+            <button onClick={(e) => handleSuggestionClick('Adicionar gasto de R$50 em mercado', e)}>Adicionar gasto</button>
             <button onClick={(e) => handleSuggestionClick('Quais categorias estão no vermelho?', e)}>Ver categorias no vermelho</button>
         </div>
         <ChatInterface messages={messages} onSendMessage={onSendMessage} isLoading={isLoading} input={input} setInput={setInput} />
