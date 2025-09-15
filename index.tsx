@@ -19,6 +19,9 @@ interface Expense {
   category: string;
   amount: number;
   date: string;
+  month: string;
+  installmentGroupId?: string;
+  installmentInfo?: string;
 }
 
 interface ChatMessage {
@@ -239,6 +242,57 @@ Quando o usuário pedir para excluir um lançamento, uma categoria ou todos os d
 - SEJA PROATIVO, NÃO PASSIVO: Se o usuário pedir uma sugestão, CRIE E APRESENTE UMA. Não devolva a pergunta.
 - PRESERVE OS NOMES DAS CATEGORIAS: "jantar fora" deve ser "jantar fora" no JSON. NÃO use underscores.
 - SIGA O FORMATO JSON: Sua resposta DEVE sempre ser um JSON válido.
+
+---
+
+FLUXO 7: LANÇAMENTO PARCELADO (PRIORIDADE MÁXIMA)
+Se a mensagem do usuário contiver qualquer padrão de parcelamento (ex: "em 3x", "3 vezes de", "parcelado em 10x"), este fluxo DEVE ser seguido. É a sua prioridade máxima.
+
+1.  **REGRA CRÍTICA:** NUNCA some os valores para criar um lançamento único. Você DEVE criar múltiplos objetos de despesa, um para cada parcela.
+2.  **Ação:** Sempre 'ADD_EXPENSE'.
+3.  **Payload:** O payload DEVE conter um array 'expenses'. Cada item no array é um objeto que representa uma única parcela.
+    -   Para cada parcela, você DEVE calcular e incluir o campo 'month' (formato 'YYYY-M'), começando do 'viewedMonth' e incrementando para os meses seguintes.
+
+4.  **Cenários:**
+    -   **Cenário 1 (Valor da PARCELA informado):**
+        -   Usuário: "Comprei a ração em 3x de 100 reais na categoria Dogs"
+        -   Sua Lógica: Criar 3 despesas de R$ 100 cada.
+        -   Sua Resposta JSON:
+            {
+              "action": "ADD_EXPENSE",
+              "payload": {
+                "expenses": [
+                  { "category": "Dogs 🐶", "amount": 100, "month": "2025-9" },
+                  { "category": "Dogs 🐶", "amount": 100, "month": "2025-10" },
+                  { "category": "Dogs 🐶", "amount": 100, "month": "2025-11" }
+                ]
+              },
+              "response": "Anotado! Lancei a compra da ração em 3 parcelas de R$ 100 na categoria Dogs 🐶."
+            }
+
+    -   **Cenário 2 (Valor TOTAL informado):**
+        -   Usuário: "Comprei um PS5 em 10x, paguei 4000 reais em Lazer"
+        -   Sua Lógica: Calcular o valor da parcela (4000 / 10 = 400) e criar 10 despesas de R$ 400 cada.
+        -   Sua Resposta JSON:
+            {
+              "action": "ADD_EXPENSE",
+              "payload": {
+                "expenses": [
+                  { "category": "Lazer 🎉", "amount": 400, "month": "2025-9" },
+                  { "category": "Lazer 🎉", "amount": 400, "month": "2025-10" },
+                  { "category": "Lazer 🎉", "amount": 400, "month": "2025-11" },
+                  { "category": "Lazer 🎉", "amount": 400, "month": "2025-12" },
+                  { "category": "Lazer 🎉", "amount": 400, "month": "2026-1" },
+                  { "category": "Lazer 🎉", "amount": 400, "month": "2026-2" },
+                  { "category": "Lazer 🎉", "amount": 400, "month": "2026-3" },
+                  { "category": "Lazer 🎉", "amount": 400, "month": "2026-4" },
+                  { "category": "Lazer 🎉", "amount": 400, "month": "2026-5" },
+                  { "category": "Lazer 🎉", "amount": 400, "month": "2026-6" }
+                ]
+              },
+              "response": "Ok, lancei a compra do PS5 em 10 parcelas de R$ 400 em Lazer 🎉."
+            }
+---
 `;
 const ai = new GoogleGenAI({ apiKey: "AIzaSyBodxRZLyiZuSlCE4HBSv2QtmGQnk71Umc" });
 
@@ -549,9 +603,14 @@ const ExpenseList = ({ expenses, onDeleteExpense }: { expenses: Expense[], onDel
       <ul>
         {expenses.slice().reverse().map((expense) => (
           <SwipeableListItem key={expense.id} onDelete={() => onDeleteExpense(expense.id)}>
-            <span className="expense-category">{expense.category}</span>
-            <span className="expense-date">{new Date(expense.date).toLocaleDateString('pt-BR')}</span>
-            <span className="expense-amount">- {formatCurrency(expense.amount)}</span>
+            <div className="expense-details">
+              <span className="expense-category">{expense.category}</span>
+              {expense.installmentInfo && <span className="expense-installment-chip">{expense.installmentInfo}</span>}
+            </div>
+            <div className="expense-right-col">
+              <span className="expense-date">{new Date(expense.date).toLocaleDateString('pt-BR')}</span>
+              <span className="expense-amount">- {formatCurrency(expense.amount)}</span>
+            </div>
           </SwipeableListItem>
         ))}
       </ul>
@@ -773,7 +832,8 @@ function App() {
 
       const { action, payload, response: textResponse } = aiResponseJson;
 
-      let finalHistory = [...newChatHistory, { role: 'model', text: textResponse }];
+      const modelMessage: ChatMessage = { role: 'model', text: String(textResponse) };
+      const finalHistory = [...newChatHistory, modelMessage];
 
       switch (action) {
         case 'CONFIRM_ACTION':
@@ -794,24 +854,41 @@ function App() {
           setPendingAction(null);
           break;
         case 'ADD_EXPENSE':
-          const monthToAdd = payload.month || viewedMonth;
-          const newExpenses: Expense[] = payload.expenses.map((exp: { category: string, amount: number }) => ({
-            id: `exp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-            ...exp,
-            month: monthToAdd,
-            date: new Date().toISOString(),
-          }));
-          for (const expense of newExpenses) {
+          const isInstallment = payload.expenses.length > 1;
+          const installmentGroupId = isInstallment ? `inst_${Date.now()}_${Math.random().toString(36).substr(2, 9)}` : undefined;
+
+          const processedExpenses: Expense[] = payload.expenses.map((exp: any, index: number) => {
+            const monthToAdd = exp.month || viewedMonth;
+            return {
+              id: `exp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              category: exp.category,
+              amount: exp.amount,
+              month: monthToAdd,
+              date: new Date().toISOString(),
+              installmentGroupId: installmentGroupId,
+              installmentInfo: isInstallment ? `${index + 1}/${payload.expenses.length}` : undefined,
+            };
+          });
+
+          let maxMonth = currentMonth;
+
+          for (const expense of processedExpenses) {
             await saveExpense(expense);
+            if (expense.month === viewedMonth) {
+              setExpenses(prev => [...prev, expense]);
+            }
+
+            const [expYear, expMonth] = expense.month.split('-').map(Number);
+            const [maxYear, maxMonthNum] = maxMonth.split('-').map(Number);
+            if (expYear > maxYear || (expYear === maxYear && expMonth > maxMonthNum)) {
+              maxMonth = expense.month;
+            }
           }
-          if (monthToAdd === viewedMonth) {
-            setExpenses(prev => [...prev, ...newExpenses]);
+          
+          if (maxMonth !== currentMonth) {
+            setCurrentMonth(maxMonth);
           }
-          const [newExpYear, newExpMonth] = monthToAdd.split('-').map(Number);
-          const [latestExpYear, latestExpMonth] = currentMonth.split('-').map(Number);
-          if (newExpYear > latestExpYear || (newExpYear === latestExpYear && newExpMonth > latestExpMonth)) {
-            setCurrentMonth(monthToAdd);
-          }
+
           setPendingAction(null);
           break;
         case 'DELETE_EXPENSE':
