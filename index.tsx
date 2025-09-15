@@ -717,8 +717,8 @@ function App() {
   useEffect(() => {
     const savedBudgets = localStorage.getItem(`budgets_${viewedMonth}`);
     const savedExpenses = localStorage.getItem(`expenses_${viewedMonth}`);
-    setBudgets(savedBudgets ? JSON.parse(savedBudgets) : { "Moradia": 2000, "Alimentação": 1000, "Transporte": 500, "Lazer": 800 });
-    setExpenses(savedExpenses ? JSON.parse(savedExpenses) : [{id: '1', category: "Alimentação", amount: 350, date: new Date().toISOString()}, {id: '2', category: "Lazer", amount: 600, date: new Date().toISOString()}]);
+    setBudgets(savedBudgets ? JSON.parse(savedBudgets) : {});
+    setExpenses(savedExpenses ? JSON.parse(savedExpenses) : []);
   }, [viewedMonth]);
 
   useEffect(() => { localStorage.setItem(`budgets_${viewedMonth}`, JSON.stringify(budgets)); }, [budgets, viewedMonth]);
