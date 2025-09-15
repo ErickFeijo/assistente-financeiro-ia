@@ -5,6 +5,7 @@
 import { GoogleGenAI } from '@google/genai';
 import { useEffect, useState, useRef } from 'react';
 import ReactDOM from 'react-dom/client';
+import { getBudgets, saveBudgets, getExpenses, saveExpense, deleteExpense, clearAllData, deleteCategoryFromDB } from './db';
 
 // --- TYPES ---
 type MainView = 'summary' | 'entries' | 'assistant';
@@ -116,21 +117,29 @@ FLUXO 1: AÇÃO DIRETA (PARA SOLICITAÇÕES CLARAS)
 Quando um pedido do usuário for claro e inequívoco (ex: adicionar um gasto a uma categoria existente), execute a ação diretamente.
 
 1.  **Ações Finais:** 'SET_BUDGET', 'ADD_EXPENSE'
-2.  **Payload:** Os dados para a ação.
-3.  **Response:** Uma mensagem de confirmação amigável do que você fez.
+2.  **Payload:** Os dados para a ação. Para 
+'ADD_EXPENSE',
+ o payload é um objeto com a chave 
+'expenses'
+ (um array). Opcionalmente, inclua um campo 
+'month'
+ (formato 'YYYY-M') se a ação for para um mês diferente do 
+ 'viewedMonth'
+.
+3.  **Response:** Uma mensagem de confirmação amigável e curta.
     -   Usuário: "gastei 50 no mercado"
     -   Sua resposta JSON:
         {
           "action": "ADD_EXPENSE",
-          "payload": [{ "category": "mercado", "amount": 50 }],
-          "response": "Anotado! Gasto de R$ 50 na categoria 'mercado' registrado."
+          "payload": { "expenses": [{ "category": "mercado", "amount": 50 }] },
+          "response": "Anotado! Gasto de R$ 50 em 'mercado'."
         }
-    -   Usuário: "orçamento mercado 500"
+    -   Usuário: "orçamento de 500 para mercado em outubro"
     -   Sua resposta JSON:
         {
           "action": "SET_BUDGET",
-          "payload": { "mercado": 500 },
-          "response": "Pronto! Orçamento de R$ 500 para 'mercado' definido."
+          "payload": { "budget": { "mercado": 500 }, "month": "2025-10" },
+          "response": "Ok, orçamento de R$ 500 para 'mercado' em Outubro definido."
         }
 
 ---
@@ -140,17 +149,17 @@ Use este fluxo quando precisar de esclarecimentos ou para ações críticas como
 
 1. Ação inicial: 'CONFIRM_ACTION'
    -   **Payload:** 'actionToConfirm' (a ação final) e 'data'.
-   -   **Response:** Uma pergunta clara ao usuário.
+   -   **Response:** Uma pergunta clara e curta ao usuário.
    -   **Exemplo (Adivinhação de Categoria):
-     -   Usuário: "gastei 1101 no rancho" (e a categoria 'mercado' existe)
+     -   Usuário: "gastei 1101 no rancho"
      -   Sua resposta JSON:
         {
           "action": "CONFIRM_ACTION",
           "payload": {
             "actionToConfirm": "ADD_EXPENSE",
-            "data": [{ "category": "mercado", "amount": 1101 }]
+            "data": { "expenses": [{ "category": "mercado", "amount": 1101 }] }
           },
-          "response": "Não encontrei a categoria 'rancho'. Você quis dizer 'mercado'? Posso registrar o gasto de R$ 1101 lá?"
+          "response": "Não achei a categoria 'rancho'. Quis dizer 'mercado'?"
         }
     -  **Exemplo (Virar o Mès):
       - Usuário: "vamos para o próximo mès"
@@ -161,7 +170,7 @@ Use este fluxo quando precisar de esclarecimentos ou para ações críticas como
             "actionToConfirm": "NEXT_MONTH",
             "data": {}
           },
-          "response": "Ok! Deseja arquivar este mès e começar um novo? Posso copiar seus orçamentos atuais para o próximo mès?"
+          "response": "Vamos para o próximo mès? Posso copiar os orçamentos atuais?"
         }
 
 2. Resposta do usuário à confirmação:
@@ -171,7 +180,7 @@ Use este fluxo quando precisar de esclarecimentos ou para ações críticas como
        {
          "action": "NEXT_MONTH",
          "payload": { "copyBudgets": true },
-         "response": "Tudo certo! Iniciando o novo mès com seus orçamentos copiados."
+         "response": "Pronto! Novo mès iniciado com os orçamentos copiados."
        }
    - Se o usuário negar, responda com 'CANCEL_ACTION'.
 
@@ -188,7 +197,7 @@ Quando o usuário pedir para ver dados de um mès anterior.
         {
           "action": "VIEW_PREVIOUS_MONTH",
           "payload": { "year": 2024, "month": 6 },
-          "response": "Claro! Carregando os dados de Junho de 2024."
+          "response": "Carregando dados de Junho/2024..."
         }
 ---
 
@@ -196,27 +205,29 @@ FLUXO 4: SUGESTÃO DE ORÇAMENTO (SEJA PROATIVO!)
 Quando o usuário pedir ajuda para criar um orçamento (ex: "sugira um orçamento pra mim", "me ajuda a pensar", "distribua os valores"), você DEVE ser proativo. NÃO peça mais informações. Crie e sugira um plano completo.
 
 1.  **Ação:** Use 'CONFIRM_ACTION' para propor o orçamento.
-2.  **Payload:** 'actionToConfirm' será 'SET_BUDGET', e 'data' será o objeto de orçamento completo que você criou.
+2.  **Payload:** 'actionToConfirm' será 'SET_BUDGET', e 'data' será o objeto de orçamento completo que você criou (com a chave 'budget' e opcionalmente 'month')
 3.  **Response:** Apresente a sugestão de forma clara e amigável, e pergunte se o usuário aprova.
-    -   Usuário: "me ajuda a pensar num orçamento, ganho 11000"
+    -   Usuário: "me ajuda a pensar num orçamento para outubro, ganho 4700"
     -   Sua resposta JSON:
         {
           "action": "CONFIRM_ACTION",
           "payload": {
             "actionToConfirm": "SET_BUDGET",
             "data": {
-              "Hotéis 🏠": 3000,
-              "Contas 💡": 500,
-              "Mercado 🛒": 1500,
-              "Transporte 🚗": 600,
-              "Saúde 🏥": 400,
-              "Lazer 🎉": 1000,
-              "Cuidados Pessoais 💄": 500,
-              "Investimentos 📈": 2500,
-              "Emergências 🆘": 1000
+              "budget": {
+                "Moradia 🏠": 1500,
+                "Alimentação 🛒": 1000,
+                "Transporte 🚗": 400,
+                "Contas 💡": 600,
+                "Lazer 🎉": 300,
+                "Saúde 🏥": 200,
+                "Educação 📚": 200,
+                "Economias 💰": 500
+              },
+              "month": "2025-10"
             }
           },
-          "response": "Com certeza! Com base no seu salário de R$ 11.000, preparei uma sugestão de orçamento detalhada para você, usando categorias específicas. Dè uma olhada:\n\n- **Hotéis 🏠:** R$ 3.000\n- **Contas 💡:** R$ 500\n- **Mercado 🛒:** R$ 1.500\n- **Transporte 🚗:** R$ 600\n- **Saúde 🏥:** R$ 400\n- **Lazer 🎉:** R$ 1.000\n- **Cuidados Pessoais 💄:** R$ 500\n- **Investimentos 📈:** R$ 2.500\n- **Emergências 🆘:** R$ 1.000\n\nO que você acha? Posso definir este como o seu orçamento para o mès?"
+          "response": "Criei uma sugestão de orçamento para Outubro, com base no seu salário de R$ 4.700:\n\n- Moradia 🏠: R$ 1.500\n- Alimentação 🛒: R$ 1.000\n- Transporte 🚗: R$ 400\n- Contas 💡: R$ 600\n- Lazer 🎉: R$ 300\n- Saúde 🏥: R$ 200\n- Educação 📚: R$ 200\n- Economias 💰: R$ 500\n\nAprova?"
         }
 
 ---
@@ -226,7 +237,7 @@ Quando o usuário enviar uma imagem, extraia as informações e peça confirmaç
 
 1.  **Análise da Imagem:** Extraia o valor total e sugira uma categoria provável (ex: 'Mercado', 'Restaurante', 'Transporte').
 2.  **Ação de Confirmação:** Use 'CONFIRM_ACTION'.
-    -   **Payload:** 'actionToConfirm' será 'ADD_EXPENSE', e 'data' conterá a categoria e o valor extraídos.
+    -   **Payload:** 'actionToConfirm' será 'ADD_EXPENSE', e 'data' conterá a categoria e o valor extraídos (dentro de um objeto com a chave 'expenses')
     -   **Response:** Apresente os dados extraídos e peça a confirmação do usuário.
     -   **Exemplo (Usuário envia foto de nota de supermercado):
         -   Sua resposta JSON:
@@ -234,9 +245,9 @@ Quando o usuário enviar uma imagem, extraia as informações e peça confirmaç
               "action": "CONFIRM_ACTION",
               "payload": {
                 "actionToConfirm": "ADD_EXPENSE",
-                "data": [{ "category": "Mercado", "amount": 185.70 }]
+                "data": { "expenses": [{ "category": "Mercado", "amount": 185.70 }] }
               },
-              "response": "Analisei a nota fiscal e encontrei um total de R$ 185,70. A categoria parece ser 'Mercado'. Está correto? Posso adicionar este gasto?"
+              "response": "Nota fiscal: R$ 185,70 em 'Mercado'. Correto?"
             }
 3.  **Resposta do Usuário:**
     -   Se o usuário confirmar, proceda com a ação 'ADD_EXPENSE'.
@@ -263,7 +274,7 @@ Quando o usuário pedir para excluir um lançamento, uma categoria ou todos os d
             "actionToConfirm": "DELETE_EXPENSE",
             "data": { "category": "mercado", "amount": 50 }
           },
-          "response": "Tem certeza que deseja excluir o lançamento de R$ 50 em 'mercado'?"
+          "response": "Excluir o lançamento de R$ 50 em 'mercado'?"
         }
     -   Exemplo (excluir categoria):
         {
@@ -272,7 +283,7 @@ Quando o usuário pedir para excluir um lançamento, uma categoria ou todos os d
             "actionToConfirm": "DELETE_CATEGORY",
             "data": { "category": "mercado" }
           },
-          "response": "Tem certeza que deseja excluir a categoria 'mercado' e todos os seus dados? Esta ação não pode ser desfeita."
+          "response": "Excluir a categoria 'mercado' e todos os seus lançamentos?"
         }
     -   Exemplo (excluir tudo):
         {
@@ -281,15 +292,18 @@ Quando o usuário pedir para excluir um lançamento, uma categoria ou todos os d
             "actionToConfirm": "CLEAR_ALL_DATA",
             "data": {}
           },
-          "response": "Tem certeza que deseja excluir todos os dados? Esta ação não pode ser desfeita."
+          "response": "Apagar todos os dados? A ação não pode ser desfeita."
         }
 4.  **Resposta do Usuário:**
     -   Se o usuário confirmar, responda com a ação final ('DELETE_EXPENSE', 'DELETE_CATEGORY', 'CLEAR_ALL_DATA').
     -   Se o usuário negar, responda com 'CANCEL_ACTION'.
 
+---
+
 --- REGRAS IMPORTANTES ---
+- SEJA CONCISO: Responda de forma curta e direta, ideal para mobile. Evite frases longas e parágrafos desnecessários.
 - SEJA PROATIVO, NÃO PASSIVO: Se o usuário pedir uma sugestão, CRIE E APRESENTE UMA. Não devolva a pergunta.
-- PRESERVE OS NOMES DAS CATEGORias: "jantar fora" deve ser "jantar fora" no JSON. NÃO use underscores.
+- PRESERVE OS NOMES DAS CATEGORIAS: "jantar fora" deve ser "jantar fora" no JSON. NÃO use underscores.
 - SIGA O FORMATO JSON: Sua resposta DEVE sempre ser um JSON válido.
 `;
 const ai = new GoogleGenAI({ apiKey: "AIzaSyBodxRZLyiZuSlCE4HBSv2QtmGQnk71Umc" });
@@ -705,9 +719,9 @@ const ChatInterface = ({ messages, onSendMessage, isLoading, input, setInput }: 
 // --- MAIN APP COMPONENT ---
 
 function App() {
-  const [mainView, setMainView] = useState<MainView>('summary');
-  const [currentMonth, setCurrentMonth] = useState(getMonthYear());
-  const [viewedMonth, setViewedMonth] = useState(getMonthYear());
+  const [mainView, setMainView] = useState<MainView>(() => (localStorage.getItem('mainView') as MainView) || 'summary');
+  const [currentMonth, setCurrentMonth] = useState(() => localStorage.getItem('currentMonth') || getMonthYear());
+  const [viewedMonth, setViewedMonth] = useState(() => localStorage.getItem('viewedMonth') || getMonthYear());
   const [budgets, setBudgets] = useState<Budget>({});
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([{ role: 'model', text: 'Olá! Sou seu assistente financeiro.' }]);
@@ -715,14 +729,20 @@ function App() {
   const [pendingAction, setPendingAction] = useState<any | null>(null);
 
   useEffect(() => {
-    const savedBudgets = localStorage.getItem(`budgets_${viewedMonth}`);
-    const savedExpenses = localStorage.getItem(`expenses_${viewedMonth}`);
-    setBudgets(savedBudgets ? JSON.parse(savedBudgets) : {});
-    setExpenses(savedExpenses ? JSON.parse(savedExpenses) : []);
+    async function loadData() {
+        const [savedBudgets, savedExpenses] = await Promise.all([
+            getBudgets(viewedMonth),
+            getExpenses(viewedMonth)
+        ]);
+        setBudgets(savedBudgets || {});
+        setExpenses(savedExpenses || []);
+    }
+    loadData();
   }, [viewedMonth]);
 
-  useEffect(() => { localStorage.setItem(`budgets_${viewedMonth}`, JSON.stringify(budgets)); }, [budgets, viewedMonth]);
-  useEffect(() => { localStorage.setItem(`expenses_${viewedMonth}`, JSON.stringify(expenses)); }, [expenses, viewedMonth]);
+  useEffect(() => { localStorage.setItem('mainView', mainView); }, [mainView]);
+  useEffect(() => { localStorage.setItem('currentMonth', currentMonth); }, [currentMonth]);
+  useEffect(() => { localStorage.setItem('viewedMonth', viewedMonth); }, [viewedMonth]);
 
   const handleMonthChange = (direction: 'prev' | 'next') => {
     const [year, month] = viewedMonth.split('-').map(Number);
@@ -733,7 +753,8 @@ function App() {
     setViewedMonth(newMonthKey);
   };
 
-  const handleDeleteExpense = (expenseId: string) => {
+  const handleDeleteExpense = async (expenseId: string) => {
+    await deleteExpense(expenseId);
     setExpenses(prev => prev.filter(exp => exp.id !== expenseId));
   };
 
@@ -824,31 +845,47 @@ function App() {
           setPendingAction(payload);
           break;
         case 'SET_BUDGET':
-          setBudgets(prev => ({ ...prev, ...payload }));
+          const monthToSet = payload.month || viewedMonth;
+          const newBudgets = { ...budgets, ...payload.budget };
+          await saveBudgets(monthToSet, newBudgets);
+          if (monthToSet === viewedMonth) {
+            setBudgets(newBudgets);
+          }
+          const [newYear, newMonth] = monthToSet.split('-').map(Number);
+          const [latestYear, latestMonth] = currentMonth.split('-').map(Number);
+          if (newYear > latestYear || (newYear === latestYear && newMonth > latestMonth)) {
+            setCurrentMonth(monthToSet);
+          }
           setPendingAction(null);
           break;
         case 'ADD_EXPENSE':
-          const newExpenses: Expense[] = payload.map((exp: { category: string, amount: number }) => ({
+          const monthToAdd = payload.month || viewedMonth;
+          const newExpenses: Expense[] = payload.expenses.map((exp: { category: string, amount: number }) => ({
             id: `exp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             ...exp,
+            month: monthToAdd,
             date: new Date().toISOString(),
           }));
-          setExpenses(prev => [...prev, ...newExpenses]);
+          for (const expense of newExpenses) {
+            await saveExpense(expense);
+          }
+          if (monthToAdd === viewedMonth) {
+            setExpenses(prev => [...prev, ...newExpenses]);
+          }
+          const [newExpYear, newExpMonth] = monthToAdd.split('-').map(Number);
+          const [latestExpYear, latestExpMonth] = currentMonth.split('-').map(Number);
+          if (newExpYear > latestExpYear || (newExpYear === latestExpYear && newExpMonth > latestExpMonth)) {
+            setCurrentMonth(monthToAdd);
+          }
           setPendingAction(null);
           break;
         case 'DELETE_EXPENSE':
             const { category: catToDelete, amount: amountToDelete } = payload;
-            const expenseIndex = expenses.reduce((lastIndex, expense, currentIndex) => {
-                if (expense.category.toLowerCase() === catToDelete.toLowerCase() && expense.amount === amountToDelete) {
-                    return currentIndex;
-                }
-                return lastIndex;
-            }, -1);
+            const expenseToDelete = expenses.find(expense => expense.category.toLowerCase() === catToDelete.toLowerCase() && expense.amount === amountToDelete);
   
-            if (expenseIndex > -1) {
-              const updatedExpenses = [...expenses];
-              updatedExpenses.splice(expenseIndex, 1);
-              setExpenses(updatedExpenses);
+            if (expenseToDelete) {
+              await deleteExpense(expenseToDelete.id);
+              setExpenses(prev => prev.filter(exp => exp.id !== expenseToDelete.id));
             }
             setPendingAction(null);
             break;
@@ -858,9 +895,9 @@ function App() {
             const newMonthKey = `${nextDate.getFullYear()}-${nextDate.getMonth() + 1}`;
             
             if (payload.copyBudgets) {
-              const currentBudgets = localStorage.getItem(`budgets_${viewedMonth}`);
+              const currentBudgets = await getBudgets(viewedMonth);
               if(currentBudgets) {
-                  localStorage.setItem(`budgets_${newMonthKey}`, currentBudgets);
+                  await saveBudgets(newMonthKey, currentBudgets);
               }
             }
             setViewedMonth(newMonthKey);
@@ -873,14 +910,10 @@ function App() {
             setPendingAction(null);
             break;
         case 'CLEAR_ALL_DATA':
-          const keysToRemove = [];
-          for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
-            if (key && (key.startsWith('budgets_') || key.startsWith('expenses_'))) {
-              keysToRemove.push(key);
-            }
-          }
-          keysToRemove.forEach(key => localStorage.removeItem(key));
+          await clearAllData();
+          localStorage.removeItem('mainView');
+          localStorage.removeItem('currentMonth');
+          localStorage.removeItem('viewedMonth');
           
           setBudgets({});
           setExpenses([]);
@@ -892,6 +925,7 @@ function App() {
           break;
         case 'DELETE_CATEGORY':
           const { category: categoryToDelete } = payload;
+          await deleteCategoryFromDB(categoryToDelete, viewedMonth);
           
           const updatedBudgets = { ...budgets };
           delete updatedBudgets[categoryToDelete];
