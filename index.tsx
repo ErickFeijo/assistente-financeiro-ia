@@ -14,6 +14,7 @@ interface Budget {
 }
 
 interface Expense {
+  id: string;
   category: string;
   amount: number;
   date: string;
@@ -26,6 +27,8 @@ interface ChatMessage {
 }
 
 // --- HELPERS ---
+const IS_DEBUG_MODE = new URLSearchParams(window.location.search).get('debug') === 'true';
+
 const formatCurrency = (value: number, decimals = false) => {
   return value.toLocaleString('pt-BR', {
     style: 'currency',
@@ -47,11 +50,63 @@ const formatMonthYear = (monthKey: string, short = false) => {
     return formatted.charAt(0).toUpperCase() + formatted.slice(1);
 };
 
+// --- LOGGING HELPERS ---
+const SESSION_ID = `session_${Date.now()}`;
+const MAX_LOG_ENTRIES = 100;
+
+const writeLog = (type: 'INTERACTION' | 'ERROR', data: object) => {
+  if (!IS_DEBUG_MODE) return;
+  try {
+    const logEntry = {
+      timestamp: new Date().toISOString(),
+      sessionId: SESSION_ID,
+      type,
+      data,
+    };
+
+    const existingLogs = JSON.parse(localStorage.getItem('app_logs') || '[]');
+    existingLogs.push(logEntry);
+
+    if (existingLogs.length > MAX_LOG_ENTRIES) {
+      existingLogs.splice(0, existingLogs.length - MAX_LOG_ENTRIES);
+    }
+
+    localStorage.setItem('app_logs', JSON.stringify(existingLogs));
+  } catch (error) {
+    console.error("Failed to write log:", error);
+  }
+};
+
+const downloadLogs = () => {
+  try {
+    const logs = localStorage.getItem('app_logs');
+    if (!logs || logs === '[]') {
+      alert("Nenhum log para baixar.");
+      return;
+    }
+    const blob = new Blob([logs], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `assistente-financeiro-logs-${new Date().toISOString()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    console.error("Failed to download logs:", error);
+    alert("Falha ao baixar os logs.");
+  }
+};
+
+
 // --- AI INSTANCE & SYSTEM INSTRUCTION ---
 const SYSTEM_INSTRUCTION = `
 Você é um assistente de finanças pessoais amigável, inteligente e proativo. Sua tarefa é ajudar o usuário a gerenciar orçamentos e despesas de forma conversacional.
 
-O estado atual das finanças é fornecido em JSON, contendo os orçamentos ('budgets') e um resumo dos gastos por categoria ('expenseSummary').
+O estado atual das finanças é fornecido em JSON. Ele contém:
+- 'budgets': Os orçamentos definidos para cada categoria.
+- 'expenses': Uma lista de TODOS os lançamentos de despesas individuais do mês, cada um com 'category', 'amount' e 'date'. Use esta lista para identificar lançamentos específicos quando o usuário pedir para visualizar ou apagar.
 
 Responda SEMPRE em formato JSON.
 
@@ -78,7 +133,7 @@ Quando um pedido do usuário for claro e inequívoco (ex: adicionar um gasto a u
           "response": "Pronto! Orçamento de R$ 500 para 'mercado' definido."
         }
 
---- 
+---
 
 FLUXO 2: CONFIRMAÇÃO (PARA SOLICITAÇÕES AMBÍGUAS OU IMPORTANTES)
 Use este fluxo quando precisar de esclarecimentos ou para ações críticas como 'virar o mès'.
@@ -120,7 +175,7 @@ Use este fluxo quando precisar de esclarecimentos ou para ações críticas como
        }
    - Se o usuário negar, responda com 'CANCEL_ACTION'.
 
---- 
+---
 
 FLUXO 3: VISUALIZAR OUTRO MÈS
 Quando o usuário pedir para ver dados de um mès anterior.
@@ -164,7 +219,7 @@ Quando o usuário pedir ajuda para criar um orçamento (ex: "sugira um orçament
           "response": "Com certeza! Com base no seu salário de R$ 11.000, preparei uma sugestão de orçamento detalhada para você, usando categorias específicas. Dè uma olhada:\n\n- **Hotéis 🏠:** R$ 3.000\n- **Contas 💡:** R$ 500\n- **Mercado 🛒:** R$ 1.500\n- **Transporte 🚗:** R$ 600\n- **Saúde 🏥:** R$ 400\n- **Lazer 🎉:** R$ 1.000\n- **Cuidados Pessoais 💄:** R$ 500\n- **Investimentos 📈:** R$ 2.500\n- **Emergências 🆘:** R$ 1.000\n\nO que você acha? Posso definir este como o seu orçamento para o mès?"
         }
 
---- 
+---
 
 FLUXO 5: PROCESSAMENTO DE IMAGEM (NOTA FISCAL)
 Quando o usuário enviar uma imagem, extraia as informações e peça confirmação.
@@ -173,7 +228,7 @@ Quando o usuário enviar uma imagem, extraia as informações e peça confirmaç
 2.  **Ação de Confirmação:** Use 'CONFIRM_ACTION'.
     -   **Payload:** 'actionToConfirm' será 'ADD_EXPENSE', e 'data' conterá a categoria e o valor extraídos.
     -   **Response:** Apresente os dados extraídos e peça a confirmação do usuário.
-    -   **Exemplo (Usuário envia foto de nota de supermercado):**
+    -   **Exemplo (Usuário envia foto de nota de supermercado):
         -   Sua resposta JSON:
             {
               "action": "CONFIRM_ACTION",
@@ -191,23 +246,26 @@ Quando o usuário enviar uma imagem, extraia as informações e peça confirmaç
 ---
 
 FLUXO 6: EXCLUSÃO DE DADOS
-Quando o usuário pedir para excluir dados, categorias ou limpar tudo, você deve confirmar a ação antes de executá-la.
+Quando o usuário pedir para excluir um lançamento, uma categoria ou todos os dados, você deve confirmar a ação.
 
-1.  **Ação de Confirmação:** Use 'CONFIRM_ACTION' para pedir confirmação ao usuário.
+1.  **Ação de Confirmação:** Use 'CONFIRM_ACTION'.
 2.  **Payload:** 'actionToConfirm' será uma das seguintes ações:
-    - 'CLEAR_ALL_DATA': Para excluir todos os dados
-    - 'DELETE_CATEGORY': Para excluir uma categoria específica
-3.  **Response:** Pergunte ao usuário se ele tem certeza da ação.
-    -   Exemplo (usuário pede para excluir tudo):
+    - 'DELETE_EXPENSE': Para excluir um lançamento específico. Forneça 'category' e 'amount'.
+    - 'DELETE_CATEGORY': Para excluir uma categoria e todos os seus lançamentos.
+    - 'CLEAR_ALL_DATA': Para apagar tudo.
+3.  **Response:** Pergunte ao usuário se ele tem certeza.
+    -   Exemplo (excluir lançamento):
+        - Usuário: "apague o último lançamento de 50 em mercado"
+        - Sua resposta JSON:
         {
           "action": "CONFIRM_ACTION",
           "payload": {
-            "actionToConfirm": "CLEAR_ALL_DATA",
-            "data": {}
+            "actionToConfirm": "DELETE_EXPENSE",
+            "data": { "category": "mercado", "amount": 50 }
           },
-          "response": "Tem certeza que deseja excluir todos os dados? Esta ação não pode ser desfeita."
+          "response": "Tem certeza que deseja excluir o lançamento de R$ 50 em 'mercado'?"
         }
-    -   Exemplo (usuário pede para excluir categoria "mercado"):
+    -   Exemplo (excluir categoria):
         {
           "action": "CONFIRM_ACTION",
           "payload": {
@@ -216,13 +274,22 @@ Quando o usuário pedir para excluir dados, categorias ou limpar tudo, você dev
           },
           "response": "Tem certeza que deseja excluir a categoria 'mercado' e todos os seus dados? Esta ação não pode ser desfeita."
         }
+    -   Exemplo (excluir tudo):
+        {
+          "action": "CONFIRM_ACTION",
+          "payload": {
+            "actionToConfirm": "CLEAR_ALL_DATA",
+            "data": {}
+          },
+          "response": "Tem certeza que deseja excluir todos os dados? Esta ação não pode ser desfeita."
+        }
 4.  **Resposta do Usuário:**
-    -   Se o usuário confirmar, responda com a ação final ('CLEAR_ALL_DATA' ou 'DELETE_CATEGORY').
+    -   Se o usuário confirmar, responda com a ação final ('DELETE_EXPENSE', 'DELETE_CATEGORY', 'CLEAR_ALL_DATA').
     -   Se o usuário negar, responda com 'CANCEL_ACTION'.
 
 --- REGRAS IMPORTANTES ---
 - SEJA PROATIVO, NÃO PASSIVO: Se o usuário pedir uma sugestão, CRIE E APRESENTE UMA. Não devolva a pergunta.
-- PRESERVE OS NOMES DAS CATEGORIAS: "jantar fora" deve ser "jantar fora" no JSON. NÃO use underscores.
+- PRESERVE OS NOMES DAS CATEGORias: "jantar fora" deve ser "jantar fora" no JSON. NÃO use underscores.
 - SIGA O FORMATO JSON: Sua resposta DEVE sempre ser um JSON válido.
 `;
 const ai = new GoogleGenAI({ apiKey: "AIzaSyBodxRZLyiZuSlCE4HBSv2QtmGQnk71Umc" });
@@ -249,21 +316,81 @@ const SendIcon = () => (
     </svg>
 );
 
+const MenuIcon = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="12" r="1" />
+    <circle cx="12" cy="5" r="1" />
+    <circle cx="12" cy="19" r="1" />
+  </svg>
+);
+
+const TypingIndicator = () => (
+  <div className="typing-indicator">
+    <span></span>
+    <span></span>
+    <span></span>
+  </div>
+);
+
 // --- COMPONENTS ---
+
+const DropdownMenu = ({ children, onClose }: { children: React.ReactNode, onClose: () => void }) => {
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        onClose();
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [onClose]);
+
+  return (
+    <div ref={menuRef} className="dropdown-menu">
+      {children}
+    </div>
+  );
+};
 
 const AppHeader = ({ viewedMonth, onMonthChange, currentMonth }: {
   viewedMonth: string;
   onMonthChange: (direction: 'prev' | 'next') => void;
   currentMonth: string;
 }) => {
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const isCurrentMonth = viewedMonth === currentMonth;
+
   return (
     <header className="app-header">
-      <h1 className="app-title">Assistente Financeiro</h1>
-      <div className="month-switcher">
-        <button onClick={() => onMonthChange('prev')} aria-label="Mês anterior" className="month-switcher-button">‹</button>
-        <span className="month-switcher-label">{formatMonthYear(viewedMonth, true)}</span>
-        <button onClick={() => onMonthChange('next')} disabled={isCurrentMonth} aria-label="Próximo mês" className="month-switcher-button">›</button>
+      <div className="header-left">
+        <h1 className="app-title">AF</h1>
+      </div>
+      <div className="header-center">
+        <div className="month-switcher">
+          <button onClick={() => onMonthChange('prev')} aria-label="Mês anterior" className="month-switcher-button">‹</button>
+          <span className="month-switcher-label">{formatMonthYear(viewedMonth, true)}</span>
+          <button onClick={() => onMonthChange('next')} disabled={isCurrentMonth} aria-label="Próximo mês" className="month-switcher-button">›</button>
+        </div>
+      </div>
+      <div className="header-right">
+        {IS_DEBUG_MODE && (
+          <div className="header-menu-container">
+            <button onClick={() => setIsMenuOpen(!isMenuOpen)} className="month-switcher-button" aria-label="Menu">
+              <MenuIcon />
+            </button>
+            {isMenuOpen && (
+              <DropdownMenu onClose={() => setIsMenuOpen(false)}>
+                <button onClick={downloadLogs} className="dropdown-menu-item">
+                  Baixar Logs de Diagnóstico
+                </button>
+              </DropdownMenu>
+            )}
+          </div>
+        )}
       </div>
     </header>
   );
@@ -390,7 +517,79 @@ const AssistantView = ({ messages, onSendMessage, isLoading }: { messages: ChatM
   );
 };
 
-const ExpenseList = ({ expenses }: { expenses: Expense[] }) => {
+const SwipeableListItem = ({ children, onDelete }: { children: React.ReactNode, onDelete: () => void }) => {
+  const itemRef = useRef<HTMLLIElement>(null);
+  const [x, setX] = useState(0);
+  const [isSwiping, setIsSwiping] = useState(false);
+  const startX = useRef(0);
+
+  const handleSwipeStart = (clientX: number) => {
+    if (itemRef.current) {
+      itemRef.current.style.transition = 'none';
+      startX.current = clientX;
+      setIsSwiping(true);
+    }
+  };
+
+  const handleSwipeMove = (clientX: number) => {
+    if (!isSwiping) return;
+    const deltaX = clientX - startX.current;
+    const newX = Math.min(0, Math.max(-80, deltaX));
+    setX(newX);
+  };
+
+  const handleSwipeEnd = () => {
+    if (!isSwiping) return;
+    setIsSwiping(false);
+    if (itemRef.current) {
+      itemRef.current.style.transition = 'transform 0.3s ease';
+      if (x < -40) {
+        setX(-80);
+      } else {
+        setX(0);
+      }
+    }
+  };
+
+  const onMouseDown = (e: React.MouseEvent) => handleSwipeStart(e.clientX);
+  const onMouseMove = (e: React.MouseEvent) => handleSwipeMove(e.clientX);
+  const onMouseUp = () => handleSwipeEnd();
+  const onMouseLeave = () => handleSwipeEnd();
+
+  const onTouchStart = (e: React.TouchEvent) => handleSwipeStart(e.touches[0].clientX);
+  const onTouchMove = (e: React.TouchEvent) => handleSwipeMove(e.touches[0].clientX);
+  const onTouchEnd = () => handleSwipeEnd();
+
+  const handleDelete = () => {
+    setX(0);
+    setTimeout(() => {
+      onDelete();
+    }, 300);
+  };
+
+  return (
+    <li
+      ref={itemRef}
+      className="swipeable-list-item"
+      onMouseDown={onMouseDown}
+      onMouseMove={onMouseMove}
+      onMouseUp={onMouseUp}
+      onMouseLeave={onMouseLeave}
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+    >
+      <div className="swipeable-actions">
+        <button onClick={handleDelete} className="delete-button">Excluir</button>
+      </div>
+      <div className="swipeable-content" style={{ transform: `translateX(${x}px)` }}>
+        {children}
+      </div>
+    </li>
+  );
+};
+
+const ExpenseList = ({ expenses, onDeleteExpense }: { expenses: Expense[], onDeleteExpense: (id: string) => void }) => {
   if (expenses.length === 0) {
     return (
       <div className="view-container empty-state"><p className="empty-list-message">Nenhum lançamento neste mês.</p></div>
@@ -399,12 +598,12 @@ const ExpenseList = ({ expenses }: { expenses: Expense[] }) => {
   return (
     <div className="view-container expense-list">
       <ul>
-        {expenses.slice().reverse().map((expense, index) => (
-          <li key={index}>
+        {expenses.slice().reverse().map((expense) => (
+          <SwipeableListItem key={expense.id} onDelete={() => onDeleteExpense(expense.id)}>
             <span className="expense-category">{expense.category}</span>
             <span className="expense-date">{new Date(expense.date).toLocaleDateString('pt-BR')}</span>
             <span className="expense-amount">- {formatCurrency(expense.amount)}</span>
-          </li>
+          </SwipeableListItem>
         ))}
       </ul>
     </div>
@@ -470,7 +669,7 @@ const ChatInterface = ({ messages, onSendMessage, isLoading, input, setInput }: 
             )}
           </div>
         ))}
-        {isLoading && <div className="message model thinking">...</div>}
+        {isLoading && <div className="message model thinking"><TypingIndicator /></div>}
       </div>
       <form onSubmit={(e) => { e.preventDefault(); handleSubmit(); }} className="chat-form">
         <input
@@ -519,7 +718,7 @@ function App() {
     const savedBudgets = localStorage.getItem(`budgets_${viewedMonth}`);
     const savedExpenses = localStorage.getItem(`expenses_${viewedMonth}`);
     setBudgets(savedBudgets ? JSON.parse(savedBudgets) : { "Moradia": 2000, "Alimentação": 1000, "Transporte": 500, "Lazer": 800 });
-    setExpenses(savedExpenses ? JSON.parse(savedExpenses) : [{category: "Alimentação", amount: 350, date: new Date().toISOString()}, {category: "Lazer", amount: 600, date: new Date().toISOString()}]);
+    setExpenses(savedExpenses ? JSON.parse(savedExpenses) : [{id: '1', category: "Alimentação", amount: 350, date: new Date().toISOString()}, {id: '2', category: "Lazer", amount: 600, date: new Date().toISOString()}]);
   }, [viewedMonth]);
 
   useEffect(() => { localStorage.setItem(`budgets_${viewedMonth}`, JSON.stringify(budgets)); }, [budgets, viewedMonth]);
@@ -532,6 +731,10 @@ function App() {
     const [currentYear, currentMonthNum] = currentMonth.split('-').map(Number);
     if (newDate.getFullYear() > currentYear || (newDate.getFullYear() === currentYear && newDate.getMonth() + 1 > currentMonthNum)) return;
     setViewedMonth(newMonthKey);
+  };
+
+  const handleDeleteExpense = (expenseId: string) => {
+    setExpenses(prev => prev.filter(exp => exp.id !== expenseId));
   };
 
    const fileToGenerativePart = async (file: File) => {
@@ -551,33 +754,37 @@ function App() {
     const imageParts = images ? await Promise.all(images.map(fileToGenerativePart)) : [];
     const imageUrls = images ? images.map(file => URL.createObjectURL(file)) : [];
 
-    setChatHistory(prev => [...prev, { role: 'user', text: userInput, images: imageUrls }]);
-
-    // Create a summary of expenses to reduce prompt size
-    const expenseSummary = expenses.reduce((acc, expense) => {
-        acc[expense.category] = (acc[expense.category] || 0) + expense.amount;
-        return acc;
-    }, {} as Record<string, number>);
+    const userMessage: ChatMessage = { role: 'user', text: userInput, images: imageUrls };
+    const newChatHistory = [...chatHistory, userMessage];
+    setChatHistory(newChatHistory);
 
     const currentState = {
       budgets,
-      expenseSummary,
+      expenses,
       viewedMonth,
       currentMonth,
     };
 
+    const historyForPrompt = newChatHistory.map(msg => `${msg.role}: ${msg.text}`).join('\n');
+
     let prompt;
     if (pendingAction) {
         prompt = `
+          Histórico da conversa:
+          ${historyForPrompt}
+
           Contexto: O usuário está respondendo a uma pergunta de confirmação.
           Ação pendente: ${JSON.stringify(pendingAction)}
           Estado atual: ${JSON.stringify(currentState)}
-          Mensagem do usuário: "${userInput}"
+          Nova mensagem do usuário: "${userInput}"
         `;
     } else {
         prompt = `
+          Histórico da conversa:
+          ${historyForPrompt}
+
           Estado atual: ${JSON.stringify(currentState)}
-          Mensagem do usuário: "${userInput}"
+          Nova mensagem do usuário: "${userInput}"
         `;
     }
 
@@ -599,7 +806,18 @@ function App() {
       const aiResponseText = response.text;
       const aiResponseJson = JSON.parse(aiResponseText);
       
+      writeLog('INTERACTION', {
+        userInput,
+        imageAttached: (images || []).length > 0,
+        prompt,
+        rawApiResponse: aiResponseText,
+        parsedAction: aiResponseJson.action,
+        payload: aiResponseJson.payload,
+      });
+
       const { action, payload, response: textResponse } = aiResponseJson;
+
+      let finalHistory = [...newChatHistory, { role: 'model', text: textResponse }];
 
       switch (action) {
         case 'CONFIRM_ACTION':
@@ -611,12 +829,29 @@ function App() {
           break;
         case 'ADD_EXPENSE':
           const newExpenses: Expense[] = payload.map((exp: { category: string, amount: number }) => ({
+            id: `exp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             ...exp,
             date: new Date().toISOString(),
           }));
           setExpenses(prev => [...prev, ...newExpenses]);
           setPendingAction(null);
           break;
+        case 'DELETE_EXPENSE':
+            const { category: catToDelete, amount: amountToDelete } = payload;
+            const expenseIndex = expenses.reduce((lastIndex, expense, currentIndex) => {
+                if (expense.category.toLowerCase() === catToDelete.toLowerCase() && expense.amount === amountToDelete) {
+                    return currentIndex;
+                }
+                return lastIndex;
+            }, -1);
+  
+            if (expenseIndex > -1) {
+              const updatedExpenses = [...expenses];
+              updatedExpenses.splice(expenseIndex, 1);
+              setExpenses(updatedExpenses);
+            }
+            setPendingAction(null);
+            break;
         case 'NEXT_MONTH':
             const [year, month] = viewedMonth.split('-').map(Number);
             const nextDate = new Date(year, month, 1);
@@ -638,7 +873,6 @@ function App() {
             setPendingAction(null);
             break;
         case 'CLEAR_ALL_DATA':
-          // Limpar todos os dados do localStorage
           const keysToRemove = [];
           for (let i = 0; i < localStorage.length; i++) {
             const key = localStorage.key(i);
@@ -648,27 +882,21 @@ function App() {
           }
           keysToRemove.forEach(key => localStorage.removeItem(key));
           
-          // Resetar o estado da aplicação
           setBudgets({});
           setExpenses([]);
-          setChatHistory([{ role: 'model', text: 'Olá! Sou seu assistente financeiro.' }]);
           
-          // Voltar para o mês atual
           const currentMonthKey = getMonthYear();
           setViewedMonth(currentMonthKey);
           setCurrentMonth(currentMonthKey);
           setPendingAction(null);
           break;
         case 'DELETE_CATEGORY':
-          // Excluir uma categoria específica
           const { category: categoryToDelete } = payload;
           
-          // Remover a categoria dos orçamentos
           const updatedBudgets = { ...budgets };
           delete updatedBudgets[categoryToDelete];
           setBudgets(updatedBudgets);
           
-          // Remover os gastos da categoria
           const updatedExpenses = expenses.filter(expense => expense.category.toLowerCase() !== categoryToDelete.toLowerCase());
           setExpenses(updatedExpenses);
           setPendingAction(null);
@@ -683,10 +911,18 @@ function App() {
           break;
       }
 
-      setChatHistory(prev => [...prev, { role: 'model', text: textResponse }]);
+      setChatHistory(finalHistory);
 
     } catch (error) {
       console.error("Error calling Gemini API:", error);
+      writeLog('ERROR', {
+        userInput,
+        prompt, // Log the prompt that caused the error
+        error: {
+          message: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        },
+      });
       const errorMessage = "Desculpe, não consegui processar sua solicitação. Tente novamente.";
       setChatHistory(prev => [...prev, { role: 'model', text: errorMessage }]);
       setPendingAction(null);
@@ -698,7 +934,7 @@ function App() {
   const renderMainView = () => {
     switch (mainView) {
       case 'summary': return <SummaryView budgets={budgets} expenses={expenses} viewedMonth={viewedMonth} />;
-      case 'entries': return <ExpenseList expenses={expenses} />;
+      case 'entries': return <ExpenseList expenses={expenses} onDeleteExpense={handleDeleteExpense} />;
       case 'assistant': return <AssistantView messages={chatHistory} onSendMessage={handleSendMessage} isLoading={isLoading} />;
       default: return null;
     }
