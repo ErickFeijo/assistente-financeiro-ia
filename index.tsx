@@ -609,7 +609,7 @@ const ExpenseList = ({ expenses, onDeleteExpense }: { expenses: Expense[], onDel
             </div>
             <div className="expense-right-col">
               <span className="expense-date">{new Date(expense.date).toLocaleDateString('pt-BR')}</span>
-              <span className="expense-amount">- {formatCurrency(expense.amount)}</span>
+              <span className="expense-amount">{formatCurrency(expense.amount)}</span>
             </div>
           </SwipeableListItem>
         ))}
