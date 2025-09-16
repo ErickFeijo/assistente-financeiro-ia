@@ -537,7 +537,7 @@ const SwipeableListItem = ({ children, onDelete }: { children: React.ReactNode, 
   const handleSwipeMove = (clientX: number) => {
     if (!isSwiping) return;
     const deltaX = clientX - startX.current;
-    const newX = Math.min(0, Math.max(-80, deltaX));
+    const newX = Math.min(0, Math.max(-100, deltaX)); // Aumentei o valor máximo de swipe
     setX(newX);
   };
 
@@ -546,8 +546,8 @@ const SwipeableListItem = ({ children, onDelete }: { children: React.ReactNode, 
     setIsSwiping(false);
     if (itemRef.current) {
       itemRef.current.style.transition = 'transform 0.3s ease';
-      if (x < -40) {
-        setX(-80);
+      if (x < -50) { // Ajustei o ponto de ativação do swipe
+        setX(-100); // Ajustei para o novo tamanho
       } else {
         setX(0);
       }
@@ -729,6 +729,7 @@ function App() {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([{ role: 'model', text: 'Olá! Sou seu assistente financeiro.' }]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isFormSubmitting, setIsFormSubmitting] = useState(false); // Novo estado para carregamento do formulário
   const [pendingAction, setPendingAction] = useState<any | null>(null);
 
   useEffect(() => {
@@ -863,41 +864,46 @@ function App() {
           setPendingAction(null);
           break;
         case 'ADD_EXPENSE':
-          const isInstallment = payload.expenses.length > 1;
-          const installmentGroupId = isInstallment ? `inst_${Date.now()}_${Math.random().toString(36).substr(2, 9)}` : undefined;
-
-          const processedExpenses: Expense[] = payload.expenses.map((exp: any, index: number) => {
+          // Verificar se os lançamentos são parcelados
+          // Um lançamento é parcelado quando tem um installmentGroupId definido pela IA
+          const isInstallment = payload.expenses.length > 1 && payload.expenses.every((exp: any) => exp.installmentGroupId);
+          
+          let maxMonth = currentMonth;
+          
+          for (let i = 0; i < payload.expenses.length; i++) {
+            const exp: any = payload.expenses[i];
             const monthToAdd = exp.month || viewedMonth;
-            return {
-              id: `exp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            
+            // Se for um lançamento parcelado, usar o installmentGroupId da IA
+            // Caso contrário, não definir installmentGroupId
+            const installmentGroupId = isInstallment ? exp.installmentGroupId : undefined;
+            
+            const processedExpense: Expense = {
+              id: `exp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_${i}`,
               category: exp.category,
               amount: exp.amount,
               month: monthToAdd,
               date: new Date().toISOString(),
               installmentGroupId: installmentGroupId,
-              installmentInfo: isInstallment ? `${index + 1}/${payload.expenses.length}` : undefined,
+              installmentInfo: isInstallment && exp.installmentInfo ? exp.installmentInfo : undefined,
             };
-          });
-
-          let maxMonth = currentMonth;
-
-          for (const expense of processedExpenses) {
-            await saveExpense(expense);
-            if (expense.month === viewedMonth) {
-              setExpenses(prev => [...prev, expense]);
+            
+            await saveExpense(processedExpense);
+            if (processedExpense.month === viewedMonth) {
+              setExpenses(prev => [...prev, processedExpense]);
             }
-
-            const [expYear, expMonth] = expense.month.split('-').map(Number);
-            const [maxYear, maxMonthNum] = maxMonth.split('-').map(Number);
-            if (expYear > maxYear || (expYear === maxYear && expMonth > maxMonthNum)) {
-              maxMonth = expense.month;
+            
+            const [expYear, expMonth] = processedExpense.month.split('-').map(Number);
+            const [currentMaxYear, currentMaxMonthNum] = maxMonth.split('-').map(Number);
+            if (expYear > currentMaxYear || (expYear === currentMaxYear && expMonth > currentMaxMonthNum)) {
+              maxMonth = processedExpense.month;
             }
           }
           
           if (maxMonth !== currentMonth) {
             setCurrentMonth(maxMonth);
           }
-
+          
           setPendingAction(null);
           break;
         case 'DELETE_EXPENSE':
@@ -990,56 +996,88 @@ function App() {
     const { name, value, type } = e.target;
     const checked = (e.target as HTMLInputElement).checked;
     
-    setFormData(prev => ({
-      ...prev,
-      [name]: type === 'checkbox' ? checked : value
-    }));
+    // Para o campo de valor, formatar enquanto o usuário digita
+    if (name === 'amount') {
+      // Remover tudo exceto números e vírgula
+      let formattedValue = value.replace(/[^0-9,]/g, '');
+      
+      // Garantir que só tenha uma vírgula
+      const parts = formattedValue.split(',');
+      if (parts.length > 2) {
+        formattedValue = parts[0] + ',' + parts.slice(1).join('');
+      }
+      
+      // Limitar a 2 casas decimais
+      if (parts[1] && parts[1].length > 2) {
+        formattedValue = parts[0] + ',' + parts[1].substring(0, 2);
+      }
+      
+      setFormData(prev => ({
+        ...prev,
+        [name]: formattedValue
+      }));
+    } else {
+      setFormData(prev => ({
+        ...prev,
+        [name]: type === 'checkbox' ? checked : value
+      }));
+    }
   };
 
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (formData.isInstallment) {
-      // Adicionar lançamento parcelado
-      const installmentCount = parseInt(formData.installmentCount);
-      const amount = parseFloat(formData.amount.replace(',', '.'));
-      const installmentAmount = amount / installmentCount;
-      
-      const expensesToAdd = [];
-      const [year, month] = viewedMonth.split('-').map(Number);
-      
-      for (let i = 0; i < installmentCount; i++) {
-        const expenseMonth = new Date(year, month - 1 + i);
-        const monthKey = `${expenseMonth.getFullYear()}-${expenseMonth.getMonth() + 1}`;
+    // Iniciar o estado de carregamento
+    setIsFormSubmitting(true);
+    
+    try {
+      if (formData.isInstallment) {
+        // Adicionar lançamento parcelado
+        const installmentCount = parseInt(formData.installmentCount);
+        const amount = parseFloat(formData.amount.replace(',', '.'));
+        const installmentAmount = amount / installmentCount;
         
-        expensesToAdd.push({
-          category: formData.category,
-          amount: installmentAmount,
-          month: monthKey,
-          date: formData.date
-        });
+        const expensesToAdd = [];
+        const [year, month] = viewedMonth.split('-').map(Number);
+        
+        for (let i = 0; i < installmentCount; i++) {
+          const expenseMonth = new Date(year, month - 1 + i);
+          const monthKey = `${expenseMonth.getFullYear()}-${expenseMonth.getMonth() + 1}`;
+          
+          expensesToAdd.push({
+            category: formData.category,
+            amount: installmentAmount,
+            month: monthKey,
+            date: formData.date
+          });
+        }
+        
+        // Usar a função handleSendMessage para adicionar as despesas
+        const message = `Adicione despesas parceladas: ${installmentCount}x de R$${installmentAmount.toFixed(2)} em ${formData.category}`;
+        await handleSendMessage(message);
+      } else {
+        // Adicionar lançamento simples
+        const amount = parseFloat(formData.amount.replace(',', '.'));
+        const message = `Adicione despesa de R$${amount.toFixed(2)} em ${formData.category}`;
+        await handleSendMessage(message);
       }
       
-      // Usar a função handleSendMessage para adicionar as despesas
-      const message = `Adicione despesas parceladas: ${installmentCount}x de R$${installmentAmount.toFixed(2)} em ${formData.category}`;
-      await handleSendMessage(message);
-    } else {
-      // Adicionar lançamento simples
-      const amount = parseFloat(formData.amount.replace(',', '.'));
-      const message = `Adicione despesa de R$${amount.toFixed(2)} em ${formData.category}`;
-      await handleSendMessage(message);
+      // Fechar o formulário e resetar os dados
+      setIsFormOpen(false);
+      setFormData({
+        date: new Date().toISOString().split('T')[0],
+        description: '',
+        category: '',
+        amount: '',
+        isInstallment: false,
+        installmentCount: '1'
+      });
+    } catch (error) {
+      console.error("Error submitting form:", error);
+    } finally {
+      // Finalizar o estado de carregamento
+      setIsFormSubmitting(false);
     }
-    
-    // Fechar o formulário e resetar os dados
-    setIsFormOpen(false);
-    setFormData({
-      date: new Date().toISOString().split('T')[0],
-      description: '',
-      category: '',
-      amount: '',
-      isInstallment: false,
-      installmentCount: '1'
-    });
   };
 
   const renderMainView = () => {
@@ -1065,6 +1103,7 @@ function App() {
               value={formData.date}
               onChange={handleFormChange}
               required
+              disabled={isFormSubmitting}
             />
           </div>
           
@@ -1076,6 +1115,7 @@ function App() {
               value={formData.category}
               onChange={handleFormChange}
               required
+              disabled={isFormSubmitting}
             >
               <option value="">Selecione uma categoria</option>
               {Object.keys(budgets).map(category => (
@@ -1094,6 +1134,7 @@ function App() {
               onChange={handleFormChange}
               placeholder="0,00"
               required
+              disabled={isFormSubmitting}
             />
           </div>
           
@@ -1104,6 +1145,7 @@ function App() {
               name="isInstallment"
               checked={formData.isInstallment}
               onChange={handleFormChange}
+              disabled={isFormSubmitting}
             />
             <label htmlFor="isInstallment">Lançamento parcelado</label>
           </div>
@@ -1117,6 +1159,7 @@ function App() {
                 value={formData.installmentCount}
                 onChange={handleFormChange}
                 required
+                disabled={isFormSubmitting}
               >
                 {[...Array(24)].map((_, i) => (
                   <option key={i + 1} value={i + 1}>{i + 1}</option>
@@ -1126,8 +1169,10 @@ function App() {
           )}
           
           <div className="form-actions">
-            <button type="button" onClick={() => setIsFormOpen(false)}>Cancelar</button>
-            <button type="submit">Adicionar</button>
+            <button type="button" onClick={() => setIsFormOpen(false)} disabled={isFormSubmitting}>Cancelar</button>
+            <button type="submit" disabled={isFormSubmitting}>
+              {isFormSubmitting ? "Adicionando..." : "Adicionar"}
+            </button>
           </div>
         </form>
       </div>
