@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 import { GoogleGenAI } from '@google/genai';
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import ReactDOM from 'react-dom/client';
-import { getBudgets, saveBudgets, getExpenses, saveExpense, deleteExpense, clearAllData, deleteCategoryFromDB } from './db';
+import { clearAllData, deleteCategoryFromDB, deleteExpense, getBudgets, getExpenses, saveBudgets, saveExpense } from './db';
 
 // --- TYPES ---
 type MainView = 'summary' | 'entries' | 'assistant';
@@ -714,6 +714,15 @@ const ChatInterface = ({ messages, onSendMessage, isLoading, input, setInput }: 
 
 function App() {
   const [mainView, setMainView] = useState<MainView>(() => (localStorage.getItem('mainView') as MainView) || 'summary');
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [formData, setFormData] = useState({
+    date: new Date().toISOString().split('T')[0],
+    description: '',
+    category: '',
+    amount: '',
+    isInstallment: false,
+    installmentCount: '1'
+  });
   const [currentMonth, setCurrentMonth] = useState(() => localStorage.getItem('currentMonth') || getMonthYear());
   const [viewedMonth, setViewedMonth] = useState(() => localStorage.getItem('viewedMonth') || getMonthYear());
   const [budgets, setBudgets] = useState<Budget>({});
@@ -977,6 +986,62 @@ function App() {
     }
   };
 
+  const handleFormChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const { name, value, type } = e.target;
+    const checked = (e.target as HTMLInputElement).checked;
+    
+    setFormData(prev => ({
+      ...prev,
+      [name]: type === 'checkbox' ? checked : value
+    }));
+  };
+
+  const handleFormSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (formData.isInstallment) {
+      // Adicionar lançamento parcelado
+      const installmentCount = parseInt(formData.installmentCount);
+      const amount = parseFloat(formData.amount.replace(',', '.'));
+      const installmentAmount = amount / installmentCount;
+      
+      const expensesToAdd = [];
+      const [year, month] = viewedMonth.split('-').map(Number);
+      
+      for (let i = 0; i < installmentCount; i++) {
+        const expenseMonth = new Date(year, month - 1 + i);
+        const monthKey = `${expenseMonth.getFullYear()}-${expenseMonth.getMonth() + 1}`;
+        
+        expensesToAdd.push({
+          category: formData.category,
+          amount: installmentAmount,
+          month: monthKey,
+          date: formData.date
+        });
+      }
+      
+      // Usar a função handleSendMessage para adicionar as despesas
+      const message = `Adicione despesas parceladas: ${installmentCount}x de R$${installmentAmount.toFixed(2)} em ${formData.category}`;
+      await handleSendMessage(message);
+    } else {
+      // Adicionar lançamento simples
+      const amount = parseFloat(formData.amount.replace(',', '.'));
+      const message = `Adicione despesa de R$${amount.toFixed(2)} em ${formData.category}`;
+      await handleSendMessage(message);
+    }
+    
+    // Fechar o formulário e resetar os dados
+    setIsFormOpen(false);
+    setFormData({
+      date: new Date().toISOString().split('T')[0],
+      description: '',
+      category: '',
+      amount: '',
+      isInstallment: false,
+      installmentCount: '1'
+    });
+  };
+
   const renderMainView = () => {
     switch (mainView) {
       case 'summary': return <SummaryView budgets={budgets} expenses={expenses} viewedMonth={viewedMonth} />;
@@ -986,12 +1051,100 @@ function App() {
     }
   };
 
+  const AddExpenseForm = () => (
+    <div className="modal-overlay">
+      <div className="modal-content">
+        <h2>Adicionar Lançamento</h2>
+        <form onSubmit={handleFormSubmit}>
+          <div className="form-group">
+            <label htmlFor="date">Data:</label>
+            <input
+              type="date"
+              id="date"
+              name="date"
+              value={formData.date}
+              onChange={handleFormChange}
+              required
+            />
+          </div>
+          
+          <div className="form-group">
+            <label htmlFor="category">Categoria:</label>
+            <select
+              id="category"
+              name="category"
+              value={formData.category}
+              onChange={handleFormChange}
+              required
+            >
+              <option value="">Selecione uma categoria</option>
+              {Object.keys(budgets).map(category => (
+                <option key={category} value={category}>{category}</option>
+              ))}
+            </select>
+          </div>
+          
+          <div className="form-group">
+            <label htmlFor="amount">Valor (R$):</label>
+            <input
+              type="text"
+              id="amount"
+              name="amount"
+              value={formData.amount}
+              onChange={handleFormChange}
+              placeholder="0,00"
+              required
+            />
+          </div>
+          
+          <div className="form-group checkbox-group">
+            <input
+              type="checkbox"
+              id="isInstallment"
+              name="isInstallment"
+              checked={formData.isInstallment}
+              onChange={handleFormChange}
+            />
+            <label htmlFor="isInstallment">Lançamento parcelado</label>
+          </div>
+          
+          {formData.isInstallment && (
+            <div className="form-group">
+              <label htmlFor="installmentCount">Número de parcelas:</label>
+              <select
+                id="installmentCount"
+                name="installmentCount"
+                value={formData.installmentCount}
+                onChange={handleFormChange}
+                required
+              >
+                {[...Array(24)].map((_, i) => (
+                  <option key={i + 1} value={i + 1}>{i + 1}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          
+          <div className="form-actions">
+            <button type="button" onClick={() => setIsFormOpen(false)}>Cancelar</button>
+            <button type="submit">Adicionar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+
   return (
     <div className="app-container">
       <AppHeader viewedMonth={viewedMonth} onMonthChange={handleMonthChange} currentMonth={currentMonth} />
       <SegmentedControl selected={mainView} onSelect={setMainView} />
-      <main className="main-content">{renderMainView()}</main>
-      {/* <FloatingActionButton onClick={() => alert('Adicionar novo lançamento')} /> */}
+      <main className="main-content">
+        {renderMainView()}
+        {isFormOpen && <AddExpenseForm />}
+        {mainView === 'entries' && (
+          <FloatingActionButton onClick={() => setIsFormOpen(true)} />
+        )}
+      </main>
     </div>
   );
 }
