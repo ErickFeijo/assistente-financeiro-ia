@@ -179,6 +179,16 @@ body {
   text-overflow: ellipsis; 
   max-width: 100%;
 }
+
+.expense-description {
+  font-size: 0.8rem;
+  color: var(--secondary-text);
+  margin-top: 0.25rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
 .expense-date { 
   font-size: 0.75rem; 
   color: var(--secondary-text); 

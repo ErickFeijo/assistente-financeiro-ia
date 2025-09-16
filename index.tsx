@@ -20,6 +20,7 @@ interface Expense {
   amount: number;
   date: string;
   month: string;
+  description?: string;
   installmentGroupId?: string;
   installmentInfo?: string;
 }
@@ -110,7 +111,7 @@ Você é um assistente de finanças pessoais amigável, inteligente e proativo. 
 
 O estado atual das finanças é fornecido em JSON. Ele contém:
 - 'budgets': Os orçamentos definidos para cada categoria.
-- 'expenses': Uma lista de TODOS os lançamentos de despesas individuais do mês, cada um com 'category', 'amount' e 'date'. Use esta lista para identificar lançamentos específicos quando o usuário pedir para visualizar ou apagar.
+- 'expenses': Uma lista de TODOS os lançamentos de despesas individuais do mês, cada um com 'category', 'amount', 'date' e opcionalmente 'description'. Use esta lista para identificar lançamentos específicos quando o usuário pedir para visualizar ou apagar.
 
 Responda SEMPRE em formato JSON.
 
@@ -242,6 +243,7 @@ Quando o usuário pedir para excluir um lançamento, uma categoria ou todos os d
 - SEJA PROATIVO, NÃO PASSIVO: Se o usuário pedir uma sugestão, CRIE E APRESENTE UMA. Não devolva a pergunta.
 - PRESERVE OS NOMES DAS CATEGORIAS: "jantar fora" deve ser "jantar fora" no JSON. NÃO use underscores.
 - SIGA O FORMATO JSON: Sua resposta DEVE sempre ser um JSON válido.
+- DESCRIÇÕES: Ao adicionar uma despesa, se o usuário fornecer uma descrição, inclua-a no campo 'description'. Se não fornecer, você pode gerar uma descrição resumida com base na categoria e valor.
 
 ---
 
@@ -254,7 +256,7 @@ Se a mensagem do usuário contiver qualquer padrão de parcelamento (ex: "em 3x"
     -   Para cada parcela, você DEVE calcular e incluir o campo 'month' (formato 'YYYY-M'), começando do 'viewedMonth' e incrementando para os meses seguintes.
 
 4.  **Cenários:**
-    -   **Cenário 1 (Valor da PARCELA informado):**
+    -   **Cenário 1 (Valor da PARCELA informado):
         -   Usuário: "Comprei a ração em 3x de 100 reais na categoria Dogs"
         -   Sua Lógica: Criar 3 despesas de R$ 100 cada.
         -   Sua Resposta JSON:
@@ -270,7 +272,7 @@ Se a mensagem do usuário contiver qualquer padrão de parcelamento (ex: "em 3x"
               "response": "Anotado! Lancei a compra da ração em 3 parcelas de R$ 100 na categoria Dogs 🐶."
             }
 
-    -   **Cenário 2 (Valor TOTAL informado):**
+    -   **Cenário 2 (Valor TOTAL informado):
         -   Usuário: "Comprei um PS5 em 10x, paguei 4000 reais em Lazer"
         -   Sua Lógica: Calcular o valor da parcela (4000 / 10 = 400) e criar 10 despesas de R$ 400 cada.
         -   Sua Resposta JSON:
@@ -598,6 +600,13 @@ const ExpenseList = ({ expenses, onDeleteExpense }: { expenses: Expense[], onDel
       <div className="view-container empty-state"><p className="empty-list-message">Nenhum lançamento neste mês.</p></div>
     );
   }
+  
+  // Função para truncar texto com reticências
+  const truncateText = (text: string, maxLength: number) => {
+    if (!text) return '';
+    return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
+  };
+  
   return (
     <div className="view-container expense-list">
       <ul>
@@ -605,6 +614,7 @@ const ExpenseList = ({ expenses, onDeleteExpense }: { expenses: Expense[], onDel
           <SwipeableListItem key={expense.id} onDelete={() => onDeleteExpense(expense.id)}>
             <div className="expense-details">
               <span className="expense-category">{expense.category}</span>
+              {expense.description && <span className="expense-description">{truncateText(expense.description, 30)}</span>}
               {expense.installmentInfo && <span className="expense-installment-chip">{expense.installmentInfo}</span>}
             </div>
             <div className="expense-right-col">
@@ -884,6 +894,7 @@ function App() {
               amount: exp.amount,
               month: monthToAdd,
               date: new Date().toISOString(),
+              description: exp.description, // Incluir descrição se presente
               installmentGroupId: installmentGroupId,
               installmentInfo: isInstallment && exp.installmentInfo ? exp.installmentInfo : undefined,
             };
@@ -1053,12 +1064,18 @@ function App() {
         }
         
         // Usar a função handleSendMessage para adicionar as despesas
-        const message = `Adicione despesas parceladas: ${installmentCount}x de R$${installmentAmount.toFixed(2)} em ${formData.category}`;
+        let message = `Adicione despesas parceladas: ${installmentCount}x de R$${installmentAmount.toFixed(2)} em ${formData.category}`;
+        if (formData.description) {
+          message += ` com descrição: ${formData.description}`;
+        }
         await handleSendMessage(message);
       } else {
         // Adicionar lançamento simples
         const amount = parseFloat(formData.amount.replace(',', '.'));
-        const message = `Adicione despesa de R$${amount.toFixed(2)} em ${formData.category}`;
+        let message = `Adicione despesa de R$${amount.toFixed(2)} em ${formData.category}`;
+        if (formData.description) {
+          message += ` com descrição: ${formData.description}`;
+        }
         await handleSendMessage(message);
       }
       
@@ -1122,6 +1139,19 @@ function App() {
                 <option key={category} value={category}>{category}</option>
               ))}
             </select>
+          </div>
+          
+          <div className="form-group">
+            <label htmlFor="description">Descrição:</label>
+            <input
+              type="text"
+              id="description"
+              name="description"
+              value={formData.description}
+              onChange={handleFormChange}
+              placeholder="Descreva o lançamento (opcional)"
+              disabled={isFormSubmitting}
+            />
           </div>
           
           <div className="form-group">
