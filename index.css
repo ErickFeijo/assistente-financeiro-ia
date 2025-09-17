@@ -179,117 +179,6 @@ body {
 .message-images { display: flex; gap: 0.5rem; margin-top: 0.5rem; flex-wrap: wrap; }
 .message-images img { max-width: 100px; max-height: 100px; border-radius: 8px; object-fit: cover; }
 
-/* Expense List */
-/* ===== Lista de lançamentos: layout novo ===== */
-.expense-row {
-  position: relative;
-  display: grid;
-  grid-template-columns: 4px 1fr auto;
-  gap: 0.75rem;
-  align-items: center;
-  padding: 0.875rem 0.75rem;
-  border-bottom: 1px solid var(--border-color);
-  background-color: var(--container-bg);
-}
-
-.expense-row:hover {
-  background: #fafafa;
-}
-
-.expense-accent {
-  grid-column: 1 / 2;
-  align-self: stretch;
-  width: 4px;
-  border-radius: 2px;
-  background: var(--item-accent, var(--accent-color));
-  opacity: .85;
-}
-
-.expense-left {
-  grid-column: 2 / 3;
-  min-width: 0; /* habilita truncamento */
-  display: flex;
-  flex-direction: column;
-  gap: .25rem;
-}
-
-.expense-title-row {
-  display: flex;
-  align-items: center;
-  gap: .5rem;
-  min-width: 0;
-}
-
-.expense-category {
-  font-weight: 700;
-  font-size: .95rem;
-  color: var(--primary-text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.expense-installment-chip {
-  font-size: .70rem;
-  font-weight: 700;
-  padding: 0.15rem .5rem;
-  border-radius: 999px;
-  background: var(--item-accent-bg, var(--accent-color-light));
-  color: var(--item-accent, var(--accent-color));
-  border: 1px solid color-mix(in srgb, var(--item-accent, var(--accent-color)) 30%, transparent);
-  line-height: 1;
-}
-
-.expense-description {
-  font-size: .82rem;
-  color: var(--secondary-text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* coluna direita: valor forte, data sutil */
-.expense-right {
-  grid-column: 3 / 4;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: .2rem;
-  min-width: 88px;
-}
-
-.expense-amount {
-  font-size: 1.125rem;    /* maior que antes */
-  font-weight: 800;
-  letter-spacing: -0.01em;
-  color: var(--primary-text);
-  font-feature-settings: 'tnum';
-  white-space: nowrap;
-}
-
-.expense-date {
-  font-size: .75rem;
-  color: var(--secondary-text);
-}
-
-/* toque de zebra para listas longas (opcional) */
-.expense-list li:nth-child(2n) .expense-row {
-  background: #fff;
-}
-.expense-list li:nth-child(2n+1) .expense-row:hover {
-  background: #f9fafb;
-}
-
-/* acessibilidade ao deslizar */
-.swipeable-list-item .swipeable-content {
-  /* remove sombra forte; item novo já é limpo */
-  box-shadow: none;
-}
-
-/* Responsivo: em telas muito pequenas, reduz o valor */
-/* @media (max-width: 360px) {
-  .expense-amount { font-size: 1rem; }
-} */
 
 
 /* FAB */
@@ -474,4 +363,232 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* Expense Filter Bar */
+.expense-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.75rem 0.5rem;
+  background-color: var(--container-bg);
+  border-bottom: 1px solid var(--border-color);
+  align-items: center;
+}
+
+.expense-filter-bar .filter-buttons {
+  display: flex;
+  gap: 0.5rem;
+  flex-grow: 1;
+  flex-wrap: wrap;
+}
+
+.expense-filter-bar .filter-dropdown-container {
+  position: relative;
+}
+
+.expense-filter-bar .filter-button {
+  background-color: var(--background-color);
+  border: 1px solid var(--border-color);
+  color: var(--secondary-text);
+  padding: 0.5rem 0.75rem;
+  border-radius: 9999px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.expense-filter-bar .filter-button:hover {
+  background-color: var(--accent-color-light);
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+}
+
+.expense-filter-bar .filter-button.active {
+  background-color: var(--accent-color);
+  border-color: var(--accent-color);
+  color: white;
+}
+
+.expense-filter-bar .filter-button.active svg {
+  stroke: white;
+}
+
+.expense-filter-bar .filter-button svg {
+  width: 18px;
+  height: 18px;
+  stroke: var(--secondary-text);
+  transition: stroke 0.2s ease;
+}
+
+.expense-filter-bar .filter-button.active:hover {
+  background-color: color-mix(in srgb, var(--accent-color) 80%, black);
+  border-color: color-mix(in srgb, var(--accent-color) 80%, black);
+}
+
+.expense-filter-bar .dropdown-menu {
+  width: 250px;
+  left: 0;
+  right: auto;
+}
+
+.expense-filter-bar .dropdown-menu-item-group {
+  padding: 0.75rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.expense-filter-bar .dropdown-menu-item-group label {
+  font-size: 0.875rem;
+  color: var(--secondary-text);
+}
+
+.expense-filter-bar .dropdown-menu-item-group input[type="date"],
+.expense-filter-bar .dropdown-menu-item-group input[type="text"] {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  font-size: 0.875rem;
+  font-family: var(--font-sans);
+}
+
+.expense-filter-bar .clear-filters-button {
+  background: none;
+  border: none;
+  color: var(--secondary-text);
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.2s ease;
+  margin-left: auto; /* Alinha à direita */
+}
+
+.expense-filter-bar .clear-filters-button:hover {
+  background-color: var(--background-color);
+}
+
+.expense-filter-bar .clear-filters-button svg {
+  stroke: var(--secondary-text);
+}
+
+/* Expense List */
+/* ===== Lista de lançamentos: layout mais limpo ===== */
+.expense-row {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 0.5rem;
+  border-bottom: 1px solid var(--border-color);
+  background-color: transparent;
+  transition: background-color 0.15s ease;
+}
+
+.expense-row:hover {
+  background: #f8f9fa;
+}
+
+.expense-left {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.expense-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.expense-category {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--primary-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.expense-installment-chip {
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  background: var(--chip-bg);
+  color: var(--secondary-text);
+  border: 1px solid var(--border-color);
+  line-height: 1;
+}
+
+.expense-description {
+  font-size: 0.78rem;
+  color: var(--secondary-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* coluna direita: valor forte, data sutil */
+.expense-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.15rem;
+  min-width: 80px;
+}
+
+.expense-amount {
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--primary-text);
+  font-feature-settings: 'tnum';
+  white-space: nowrap;
+}
+
+.expense-date {
+  font-size: 0.7rem;
+  color: var(--secondary-text);
+}
+
+/* Lista mais limpa sem aparência de card */
+.expense-list ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  overflow: visible;
+  box-shadow: none;
+}
+
+.expense-list li:nth-child(2n) .expense-row {
+  background: transparent;
+}
+
+.expense-list li:nth-child(2n+1) .expense-row:hover {
+  background: #f8f9fa;
+}
+
+/* acessibilidade ao deslizar */
+.swipeable-list-item .swipeable-content {
+  box-shadow: none;
+}
+
+/* Responsivo: em telas muito pequenas, reduz o valor */
+@media (max-width: 360px) {
+  .expense-amount { font-size: 0.9rem; }
+  .expense-category { font-size: 0.85rem; }
+  .expense-description { font-size: 0.75rem; }
 }

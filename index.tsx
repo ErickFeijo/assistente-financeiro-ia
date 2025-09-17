@@ -293,6 +293,35 @@ const TypingIndicator = () => (
   </div>
 );
 
+const FilterIcon = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M22 3H2l8 9.46V21l4-2v-8.54L22 3z"/>
+  </svg>
+);
+
+const CalendarIcon = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+    <line x1="16" y1="2" x2="16" y2="6"></line>
+    <line x1="8" y1="2" x2="8" y2="6"></line>
+    <line x1="3" y1="10" x2="21" y2="10"></line>
+  </svg>
+);
+
+const SearchIcon = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="11" cy="11" r="8"></circle>
+    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+  </svg>
+);
+
+const XIcon = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="18" y1="6" x2="6" y2="18"></line>
+    <line x1="6" y1="6" x2="18" y2="18"></line>
+  </svg>
+);
+
 // --- COMPONENTS ---
 
 const DropdownMenu = ({ children, onClose }: { children: React.ReactNode, onClose: () => void }) => {
@@ -313,6 +342,120 @@ const DropdownMenu = ({ children, onClose }: { children: React.ReactNode, onClos
   return (
     <div ref={menuRef} className="dropdown-menu">
       {children}
+    </div>
+  );
+};
+
+interface ExpenseFilters {
+  category: string | null;
+  startDate: string | null;
+  endDate: string | null;
+  description: string | null;
+}
+
+const ExpenseFilterBar = ({
+  filters,
+  onFilterChange,
+  onClearFilters,
+  budgets,
+}: {
+  filters: ExpenseFilters;
+  onFilterChange: (newFilters: Partial<ExpenseFilters>) => void;
+  onClearFilters: () => void;
+  budgets: Budget;
+}) => {
+  const [isCategoryDropdownOpen, setIsCategoryDropdownOpen] = useState(false);
+  const [isDateDropdownOpen, setIsDateDropdownOpen] = useState(false);
+  const [isDescriptionInputOpen, setIsDescriptionInputOpen] = useState(false);
+  const descriptionInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (isDescriptionInputOpen) {
+      descriptionInputRef.current?.focus();
+    }
+  }, [isDescriptionInputOpen]);
+
+  const handleCategoryChange = (category: string | null) => {
+    onFilterChange({ category });
+    setIsCategoryDropdownOpen(false);
+  };
+
+  const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>, type: 'start' | 'end') => {
+    onFilterChange({ [type === 'start' ? 'startDate' : 'endDate']: e.target.value || null });
+  };
+
+  const handleDescriptionChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    onFilterChange({ description: e.target.value || null });
+  };
+
+  const hasActiveFilters = Object.values(filters).some(filter => filter !== null);
+
+  return (
+    <div className="expense-filter-bar">
+      <div className="filter-buttons">
+        <div className="filter-dropdown-container">
+          <button className={`filter-button ${filters.category ? 'active' : ''}`} onClick={() => setIsCategoryDropdownOpen(!isCategoryDropdownOpen)}>
+            <FilterIcon />
+            {filters.category && <span>{filters.category}</span>}
+          </button>
+          {isCategoryDropdownOpen && (
+            <DropdownMenu onClose={() => setIsCategoryDropdownOpen(false)}>
+              <button className="dropdown-menu-item" onClick={() => handleCategoryChange(null)}>
+                Todas as Categorias
+              </button>
+              {Object.keys(budgets).map(category => (
+                <button key={category} className="dropdown-menu-item" onClick={() => handleCategoryChange(category)}>
+                  {category}
+                </button>
+              ))}
+            </DropdownMenu>
+          )}
+        </div>
+
+        <div className="filter-dropdown-container">
+          <button className={`filter-button ${(filters.startDate || filters.endDate) ? 'active' : ''}`} onClick={() => setIsDateDropdownOpen(!isDateDropdownOpen)}>
+            <CalendarIcon />
+            {(filters.startDate || filters.endDate) && <span>Data</span>}
+          </button>
+          {isDateDropdownOpen && (
+            <DropdownMenu onClose={() => setIsDateDropdownOpen(false)}>
+              <div className="dropdown-menu-item-group">
+                <label>De:</label>
+                <input type="date" value={filters.startDate || ''} onChange={(e) => handleDateChange(e, 'start')} />
+              </div>
+              <div className="dropdown-menu-item-group">
+                <label>Até:</label>
+                <input type="date" value={filters.endDate || ''} onChange={(e) => handleDateChange(e, 'end')} />
+              </div>
+            </DropdownMenu>
+          )}
+        </div>
+
+        <div className="filter-dropdown-container">
+          <button className={`filter-button ${filters.description ? 'active' : ''}`} onClick={() => setIsDescriptionInputOpen(!isDescriptionInputOpen)}>
+            <SearchIcon />
+            {filters.description && <span>Descrição</span>}
+          </button>
+          {isDescriptionInputOpen && (
+            <DropdownMenu onClose={() => setIsDescriptionInputOpen(false)}>
+              <div className="dropdown-menu-item-group">
+                <input
+                  type="text"
+                  ref={descriptionInputRef}
+                  value={filters.description || ''}
+                  onChange={handleDescriptionChange}
+                  placeholder="Buscar descrição..."
+                />
+              </div>
+            </DropdownMenu>
+          )}
+        </div>
+      </div>
+      {hasActiveFilters && (
+        <button className="clear-filters-button" onClick={onClearFilters} aria-label="Limpar filtros">
+          <XIcon />
+        </button>
+      )}
     </div>
   );
 };
@@ -378,24 +521,36 @@ const KpiCard = ({ title, value, highlight = false }: { title: string, value: st
   </div>
 );
 
-const CategoryCard = ({ category, budget, spent, onLongPress }: { category: string, budget: number, spent: number, onLongPress: (category: string) => void }) => {
+const CategoryCard = ({ category, budget, spent, onLongPress, onClick }: { category: string, budget: number, spent: number, onLongPress: (category: string) => void, onClick: (category: string) => void }) => {
   const longPressTimer = useRef<number | null>(null);
 
   const handleMouseDown = () => {
     longPressTimer.current = window.setTimeout(() => {
       onLongPress(category);
-    }, 2000);
+      longPressTimer.current = null; // Clear timer after long press
+    }, 700); // Reduced long press time for better UX
   };
 
   const handleMouseUp = () => {
     if (longPressTimer.current) {
       clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+      onClick(category); // Trigger single click if not a long press
     }
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+      onClick(category); // Trigger single click if not a long press
+    }
+    e.preventDefault(); // Prevent ghost clicks
   };
 
   if (budget === 0) {
     return (
-      <div className="category-card empty p-4 shadow-sm" onMouseDown={handleMouseDown} onMouseUp={handleMouseUp} onTouchStart={handleMouseDown} onTouchEnd={handleMouseUp}>
+      <div className="category-card empty p-4 shadow-sm" onMouseDown={handleMouseDown} onMouseUp={handleMouseUp} onTouchStart={handleMouseDown} onTouchEnd={handleTouchEnd}>
         <span className="category-title">{category}</span>
         <button className="define-budget-cta">Definir orçamento</button>
       </div>
@@ -409,7 +564,7 @@ const CategoryCard = ({ category, budget, spent, onLongPress }: { category: stri
   else if (percentage > 70) progressColor = 'var(--warning-color)';
 
   return (
-    <div className="category-card p-4 shadow-sm" onMouseDown={handleMouseDown} onMouseUp={handleMouseUp} onTouchStart={handleMouseDown} onTouchEnd={handleMouseUp}>
+    <div className="category-card p-4 shadow-sm" onMouseDown={handleMouseDown} onMouseUp={handleMouseUp} onTouchStart={handleMouseDown} onTouchEnd={handleTouchEnd}>
       <div className="card-header">
         <span className="category-title">{category}</span>
       </div>
@@ -443,7 +598,7 @@ const FloatingActionButton = ({ onClick }: { onClick: () => void }) => (
   </button>
 );
 
-const SummaryView = ({ budgets, expenses, viewedMonth, onAddCategory, onEditCategory }: { budgets: Budget, expenses: Expense[], viewedMonth: string, onAddCategory: () => void, onEditCategory: (category: string) => void }) => {
+const SummaryView = ({ budgets, expenses, viewedMonth, onAddCategory, onEditCategory, onCategoryClick }: { budgets: Budget, expenses: Expense[], viewedMonth: string, onAddCategory: () => void, onEditCategory: (category: string) => void, onCategoryClick: (category: string) => void }) => {
   const totalBudget = Object.values(budgets).reduce((sum, amount) => sum + amount, 0);
   const totalSpent = expenses.reduce((sum, expense) => sum + expense.amount, 0);
   const totalAvailable = totalBudget - totalSpent;
@@ -470,7 +625,7 @@ const SummaryView = ({ budgets, expenses, viewedMonth, onAddCategory, onEditCate
       )}
       <div className="category-cards-container gap-3">
         {budgetKeys.map(category => (
-          <CategoryCard key={category} category={category} budget={budgets[category]} spent={calculateSpentPerCategory(category)} onLongPress={onEditCategory} />
+          <CategoryCard key={category} category={category} budget={budgets[category]} spent={calculateSpentPerCategory(category)} onLongPress={onEditCategory} onClick={onCategoryClick} />
         ))}
         <AddCategoryCard onClick={onAddCategory} />
       </div>
@@ -609,38 +764,12 @@ const ExpenseList = ({ expenses, allExpenses, onDeleteExpense }: { expenses: Exp
         {expenses.slice().reverse().map((expense) => {
           const installmentInfo = getInstallmentInfo(expense, allExpenses);
 
-          if (expense.installmentGroupId || expense.installmentInfo) {
-            console.log('Parcelled expense:', expense.category, expense.amount, expense.installmentGroupId, expense.installmentInfo, installmentInfo);
-          }
-
           return (
             <SwipeableListItem key={expense.id} onDelete={() => onDeleteExpense(expense.id)}>
-              <div
-                className="expense-row"
-                style={
-                  (() => {
-                    // cor de acento por categoria (estável)
-                    let h = 0;
-                    for (let i = 0; i < expense.category.length; i++) {
-                      h = (h << 5) - h + expense.category.charCodeAt(i);
-                      h |= 0;
-                    }
-                    const hue = Math.abs(h) % 360;
-                    return {
-                      // usa CSS vars para o item
-                      // barra: forte | chip: bem claro
-                      ['--item-accent' as any]: `hsl(${hue} 85% 45%)`,
-                      ['--item-accent-bg' as any]: `hsl(${hue} 95% 95%)`,
-                    };
-                  })()
-                }
-              >
-                <div className="expense-accent" />
-
+              <div className="expense-row">
                 <div className="expense-left">
                   <div className="expense-title-row">
                     <span className="expense-category">{expense.category}</span>
-                    {/* chip de parcela sobe pra linha do título */}
                     {installmentInfo && (
                       <span className="expense-installment-chip">{installmentInfo}</span>
                     )}
@@ -656,7 +785,7 @@ const ExpenseList = ({ expenses, allExpenses, onDeleteExpense }: { expenses: Exp
                   <div className="expense-date">{new Date(expense.date).toLocaleDateString('pt-BR')}</div>
                 </div>
               </div>
-            </SwipeableListItem>  
+            </SwipeableListItem>
           );
         })}
       </ul>
@@ -790,6 +919,12 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [isFormSubmitting, setIsFormSubmitting] = useState(false);
   const [pendingAction, setPendingAction] = useState<any | null>(null);
+  const [expenseFilters, setExpenseFilters] = useState<ExpenseFilters>({
+    category: null,
+    startDate: null,
+    endDate: null,
+    description: null,
+  });
 
   useEffect(() => {
     async function loadData() {
@@ -1239,10 +1374,54 @@ Nova mensagem do usuário: "${userInput}"
     setIsCategoryFormOpen(true);
   };
 
+  const handleCategoryClick = (category: string) => {
+    setMainView('entries');
+    setExpenseFilters(prev => ({ ...prev, category }));
+  };
+
+  const handleFilterChange = (newFilters: Partial<ExpenseFilters>) => {
+    setExpenseFilters(prev => ({ ...prev, ...newFilters }));
+  };
+
+  const handleClearFilters = () => {
+    setExpenseFilters({
+      category: null,
+      startDate: null,
+      endDate: null,
+      description: null,
+    });
+  };
+
+  const filteredExpenses = expenses.filter(expense => {
+    if (expenseFilters.category && expense.category.toLowerCase() !== expenseFilters.category.toLowerCase()) {
+      return false;
+    }
+    if (expenseFilters.startDate && new Date(expense.date) < new Date(expenseFilters.startDate)) {
+      return false;
+    }
+    if (expenseFilters.endDate && new Date(expense.date) > new Date(expenseFilters.endDate)) {
+      return false;
+    }
+    if (expenseFilters.description && !expense.description?.toLowerCase().includes(expenseFilters.description.toLowerCase())) {
+      return false;
+    }
+    return true;
+  });
+
   const renderMainView = () => {
     switch (mainView) {
-      case 'summary': return <SummaryView budgets={budgets} expenses={expenses} viewedMonth={viewedMonth} onAddCategory={handleOpenAddCategory} onEditCategory={handleOpenEditCategory} />;
-      case 'entries': return <ExpenseList expenses={expenses} allExpenses={allExpenses} onDeleteExpense={handleDeleteExpense} />;
+      case 'summary': return <SummaryView budgets={budgets} expenses={expenses} viewedMonth={viewedMonth} onAddCategory={handleOpenAddCategory} onEditCategory={handleOpenEditCategory} onCategoryClick={handleCategoryClick} />;
+      case 'entries': return (
+        <>
+          <ExpenseFilterBar
+            filters={expenseFilters}
+            onFilterChange={handleFilterChange}
+            onClearFilters={handleClearFilters}
+            budgets={budgets}
+          />
+          <ExpenseList expenses={filteredExpenses} allExpenses={allExpenses} onDeleteExpense={handleDeleteExpense} />
+        </>
+      );
       case 'assistant': return <AssistantView messages={chatHistory} onSendMessage={handleSendMessage} isLoading={isLoading} />;
       default: return null;
     }
