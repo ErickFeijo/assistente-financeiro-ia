@@ -137,6 +137,23 @@ body {
 .category-card .progress-bar-fill[style*="var(--warning-color)"] { background-color: var(--warning-color); }
 .category-card .progress-bar-fill[style*="var(--success-color)"] { background-color: var(--success-color); }
 
+.add-category-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed var(--border-color);
+  background-color: var(--background-color);
+  color: var(--secondary-text);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.add-category-card:hover {
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+  background-color: var(--accent-color-light);
+}
+
 /* Assistant View */
 .assistant-view { display: flex; flex-direction: column; height: 100%; padding-top: 0px; }
 .assistant-greeting { padding: 1rem 0; text-align: center; font-size: 1rem; color: var(--secondary-text); }
@@ -163,59 +180,117 @@ body {
 .message-images img { max-width: 100px; max-height: 100px; border-radius: 8px; object-fit: cover; }
 
 /* Expense List */
-.expense-list ul { list-style-type: none; padding: 0; margin: 0; }
-.expense-list li { padding: 0; }
-.expense-details { 
-  display: flex; 
-  flex-direction: column; 
-  min-width: 0; 
-  flex: 1;
-}
-.expense-category { 
-  font-weight: 500; 
-  text-transform: capitalize; 
-  white-space: nowrap; 
-  overflow: hidden; 
-  text-overflow: ellipsis; 
-  max-width: 100%;
+/* ===== Lista de lançamentos: layout novo ===== */
+.expense-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 4px 1fr auto;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.875rem 0.75rem;
+  border-bottom: 1px solid var(--border-color);
+  background-color: var(--container-bg);
 }
 
-.expense-description {
-  font-size: 0.8rem;
-  color: var(--secondary-text);
-  margin-top: 0.25rem;
+.expense-row:hover {
+  background: #fafafa;
+}
+
+.expense-accent {
+  grid-column: 1 / 2;
+  align-self: stretch;
+  width: 4px;
+  border-radius: 2px;
+  background: var(--item-accent, var(--accent-color));
+  opacity: .85;
+}
+
+.expense-left {
+  grid-column: 2 / 3;
+  min-width: 0; /* habilita truncamento */
+  display: flex;
+  flex-direction: column;
+  gap: .25rem;
+}
+
+.expense-title-row {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  min-width: 0;
+}
+
+.expense-category {
+  font-weight: 700;
+  font-size: .95rem;
+  color: var(--primary-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 100%;
 }
-.expense-date { 
-  font-size: 0.75rem; 
-  color: var(--secondary-text); 
-  margin-top: 0.25rem;
+
+.expense-installment-chip {
+  font-size: .70rem;
+  font-weight: 700;
+  padding: 0.15rem .5rem;
+  border-radius: 999px;
+  background: var(--item-accent-bg, var(--accent-color-light));
+  color: var(--item-accent, var(--accent-color));
+  border: 1px solid color-mix(in srgb, var(--item-accent, var(--accent-color)) 30%, transparent);
+  line-height: 1;
 }
-.expense-right-col {
+
+.expense-description {
+  font-size: .82rem;
+  color: var(--secondary-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* coluna direita: valor forte, data sutil */
+.expense-right {
+  grid-column: 3 / 4;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  justify-content: center;
-  min-width: 80px;
+  gap: .2rem;
+  min-width: 88px;
 }
-.expense-amount { 
-  font-weight: 600; 
-  font-feature-settings: 'tnum'; 
+
+.expense-amount {
+  font-size: 1.125rem;    /* maior que antes */
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--primary-text);
+  font-feature-settings: 'tnum';
   white-space: nowrap;
 }
-.expense-installment-chip {
-  font-size: 0.7rem;
-  background-color: var(--accent-color-light);
-  color: var(--accent-color);
-  padding: 0.1rem 0.4rem;
-  border-radius: 0.5rem;
-  margin-top: 0.25rem;
-  align-self: flex-start;
-  white-space: nowrap;
+
+.expense-date {
+  font-size: .75rem;
+  color: var(--secondary-text);
 }
+
+/* toque de zebra para listas longas (opcional) */
+.expense-list li:nth-child(2n) .expense-row {
+  background: #fff;
+}
+.expense-list li:nth-child(2n+1) .expense-row:hover {
+  background: #f9fafb;
+}
+
+/* acessibilidade ao deslizar */
+.swipeable-list-item .swipeable-content {
+  /* remove sombra forte; item novo já é limpo */
+  box-shadow: none;
+}
+
+/* Responsivo: em telas muito pequenas, reduz o valor */
+/* @media (max-width: 360px) {
+  .expense-amount { font-size: 1rem; }
+} */
+
 
 /* FAB */
 .fab { position: fixed; bottom: 1.5rem; right: 1.5rem; width: 56px; height: 56px; background-color: var(--accent-color); color: white; border: none; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow); cursor: pointer; z-index: 1000; transition: all 0.2s ease-in-out; }
@@ -369,7 +444,6 @@ body {
 .swipeable-list-item {
   position: relative;
   overflow: hidden;
-  background-color: var(--container-bg);
 }
 
 .swipeable-list-item .swipeable-content {
@@ -377,11 +451,6 @@ body {
   position: relative;
   z-index: 1;
   transition: transform 0.3s ease;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0.75rem 0.5rem;
-  border-bottom: 1px solid var(--border-color);
 }
 
 .swipeable-list-item .swipeable-actions {

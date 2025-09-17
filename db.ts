@@ -52,6 +52,11 @@ export async function getExpenses(month: string): Promise<any[]> {
   return db.getAllFromIndex(EXPENSES_STORE, 'month', month);
 }
 
+export async function getAllExpenses(): Promise<any[]> {
+  const db = await getDb();
+  return db.getAll(EXPENSES_STORE);
+}
+
 export async function saveExpense(expense: any): Promise<void> {
   const db = await getDb();
   await db.put(EXPENSES_STORE, expense);

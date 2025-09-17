@@ -1,11 +1,7 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
-*/
 import { GoogleGenAI } from '@google/genai';
 import { useEffect, useRef, useState } from 'react';
 import ReactDOM from 'react-dom/client';
-import { clearAllData, deleteCategoryFromDB, deleteExpense, getBudgets, getExpenses, saveBudgets, saveExpense } from './db';
+import { clearAllData, deleteCategoryFromDB, deleteExpense, getBudgets, getExpenses, getAllExpenses, saveBudgets, saveExpense } from './db';
 
 // --- TYPES ---
 type MainView = 'summary' | 'entries' | 'assistant';
@@ -31,6 +27,28 @@ interface ChatMessage {
   images?: string[];
 }
 
+/** ===== Novo contrato p/ inclusão de despesas (IA → App) ===== */
+type AddExpensePayload = {
+  expenses: ExpenseIntent[];
+};
+
+type ExpenseIntent = {
+  category: string;            // deve existir em budgets
+  description?: string;
+
+  // Caso simples (sem parcelamento)
+  amount?: number;
+
+  // Caso parcelado (usa um dos dois campos de valor)
+  installments?: {
+    count: number;                 // >= 2
+    amountPerInstallment?: number; // valor da parcela
+    totalAmount?: number;          // valor total (app divide)
+    baseMonth?: 'viewed' | 'current'; // mês base para gerar (default 'viewed')
+    startOffsetMonths?: number;    // 0 = mês base; 1 = mês seguinte... (default 0)
+  };
+};
+
 // --- HELPERS ---
 const IS_DEBUG_MODE = new URLSearchParams(window.location.search).get('debug') === 'true';
 
@@ -46,13 +64,29 @@ const formatCurrency = (value: number, decimals = false) => {
 const getMonthYear = (date = new Date()) => `${date.getFullYear()}-${date.getMonth() + 1}`;
 
 const formatMonthYear = (monthKey: string, short = false) => {
-    const [year, month] = monthKey.split('-');
-    const date = new Date(parseInt(year), parseInt(month) - 1);
-    const options: Intl.DateTimeFormatOptions = short
-        ? { month: 'short', year: 'numeric' }
-        : { month: 'long', year: 'numeric' };
-    let formatted = date.toLocaleDateString('pt-BR', options);
-    return formatted.charAt(0).toUpperCase() + formatted.slice(1);
+  const [year, month] = monthKey.split('-');
+  const date = new Date(parseInt(year), parseInt(month) - 1);
+  const options: Intl.DateTimeFormatOptions = short
+    ? { month: 'short', year: 'numeric' }
+    : { month: 'long', year: 'numeric' };
+  let formatted = date.toLocaleDateString('pt-BR', options);
+  return formatted.charAt(0).toUpperCase() + formatted.slice(1);
+};
+
+// === Month helpers para parcelamento (APP calcula meses localmente) ===
+const addMonthsToMonthKey = (monthKey: string, offset: number) => {
+  const [y, m] = monthKey.split('-').map(Number);
+  const d = new Date(y, (m - 1) + offset, 1);
+  return `${d.getFullYear()}-${d.getMonth() + 1}`;
+};
+
+// Divide total em N parcelas, distribuindo centavos
+const splitAmountIntoInstallments = (total: number, count: number) => {
+  const cents = Math.round(total * 100);
+  const base = Math.floor(cents / count);
+  let remainder = cents - base * count;
+  const arr = Array(count).fill(base).map((c, i) => (c + (i < remainder ? 1 : 0)) / 100);
+  return arr;
 };
 
 // --- LOGGING HELPERS ---
@@ -121,203 +155,126 @@ FLUXO 1: AÇÃO DIRETA (PARA SOLICITAÇÕES CLARAS)
 Quando um pedido do usuário for claro e inequívoco e a categoria existir, execute a ação diretamente.
 
 1.  **Ações Finais:** 'SET_BUDGET', 'ADD_EXPENSE'
-2.  **Payload:** Os dados para a ação. Para 
-'SET_BUDGET',
- o payload é um objeto com a chave 
-'budget'
-. Para 
-'ADD_EXPENSE',
- o payload é um objeto com a chave 
-'expenses'
- (um array). Opcionalmente, inclua um campo 
-'month'
- (formato 'YYYY-M') se a ação for para um mês diferente do 
-'viewedMonth'
-.
-3.  **Response:** Uma mensagem de confirmação amigável e curta.
-    -   Usuário: "adicione um gasto de 50 em {nome_da_categoria}"
-    -   Sua resposta JSON:
-        {
-          "action": "ADD_EXPENSE",
-          "payload": { "expenses": [{ "category": "{nome_da_categoria}", "amount": 50 }] },
-          "response": "Anotado! Gasto de R$ 50 em 
-'{nome_da_categoria}'
-."
-        }
-    -   Usuário: "definir orçamento de 500 para {nome_da_categoria} em {mês}"
-    -   Sua resposta JSON:
-        {
-          "action": "SET_BUDGET",
-          "payload": { "budget": { "{nome_da_categoria}": 500 }, "month": "{ano}-{mes}" },
-          "response": "Ok, orçamento de R$ 500 para 
-'{nome_da_categoria}'
- em {mês} definido."
-        }
+2.  **Payload:** Para 'SET_BUDGET', use { "budget": { "<categoria>": valor }, "month"?: "YYYY-M" }.
+    Para 'ADD_EXPENSE', use { "expenses": ExpenseIntent[] } (ver formato abaixo).
+3.  **Response:** Mensagem de confirmação curta.
 
 ---
 
 FLUXO 2: CONFIRMAÇÃO (PARA SOLICITAÇÕES AMBÍGUAS OU IMPORTANTES)
-Use este fluxo quando precisar de esclarecimentos, como quando uma categoria não é encontrada.
-
-1. Ação inicial: 'CONFIRM_ACTION'
-   -   **Payload:** 'actionToConfirm' (a ação final) e 'data'.
-   -   **Response:** Uma pergunta clara e curta ao usuário.
-   -   **Exemplo (Categoria não encontrada):
-     -   Usuário: "gastei 100 em {categoria_nao_existente}"
-     -   Sua resposta JSON:
-        {
-          "action": "CONFIRM_ACTION",
-          "payload": {
-            "actionToConfirm": "ADD_EXPENSE",
-            "data": { "expenses": [{ "category": "{categoria_sugerida}", "amount": 100 }] }
-          },
-          "response": "Não encontrei a categoria 
-'{categoria_nao_existente}'
-. Você quis dizer 
-'{categoria_sugerida}'
-?"
-        }
+Use quando precisar de esclarecimentos (ex.: categoria não encontrada).
+Responda com:
+{
+  "action": "CONFIRM_ACTION",
+  "payload": { "actionToConfirm": "<AÇÃO_FINAL>", "data": <payload_parcial> },
+  "response": "pergunta objetiva..."
+}
 
 ---
 
-FLUXO 3: VISUALIZAR OUTRO MÈS
-Quando o usuário pedir para ver dados de um mès anterior.
+FLUXO 3: VISUALIZAR OUTRO MÊS
+{
+  "action": "VIEW_PREVIOUS_MONTH",
+  "payload": { "year": 2024, "month": 6 },
+  "response": "Carregando dados de Junho/2024..."
+}
 
-1.  Ação: 'VIEW_PREVIOUS_MONTH'
-2.  **Payload:** 'year' e 'month' (número do mès, 1-12).
-3.  **Response:** Uma mensagem indicando que você está carregando os dados.
-    -   Usuário: "me mostra os gastos de junho de 2024"
-    -   Sua resposta JSON:
-        {
-          "action": "VIEW_PREVIOUS_MONTH",
-          "payload": { "year": 2024, "month": 6 },
-          "response": "Carregando dados de Junho/2024..."
-        }
 ---
 
-FLUXO 4: SUGESTÃO DE ORÇAMENTO (SEJA PROATIVO!)
-Quando o usuário pedir ajuda para criar um orçamento (ex: "sugira um orçamento pra mim", "me ajuda a pensar", "distribua os valores"), você DEVE ser proativo. NÃO peça mais informações. Crie e sugira um plano completo.
-
-1.  **Ação:** Use 'CONFIRM_ACTION' para propor o orçamento.
-2.  **Payload:** 'actionToConfirm' será 'SET_BUDGET', e 'data' será o objeto de orçamento completo que você criou (com a chave 
-'budget'
- e opcionalmente 
-'month'
-)
-3.  **Response:** Apresente a sugestão de forma clara e amigável, e pergunte se o usuário aprova.
+FLUXO 4: SUGESTÃO DE ORÇAMENTO (PROATIVO)
+Crie um plano completo e proponha via:
+{
+  "action": "CONFIRM_ACTION",
+  "payload": { "actionToConfirm": "SET_BUDGET", "data": { "budget": {...}, "month"?: "YYYY-M" } },
+  "response": "Sugestão..."
+}
 
 ---
 
 FLUXO 5: PROCESSAMENTO DE IMAGEM (NOTA FISCAL)
-Quando o usuário enviar uma imagem, extraia as informações e peça confirmação.
-
-1.  **Análise da Imagem:** Extraia o valor total e sugira uma categoria provável.
-2.  **Ação de Confirmação:** Use 'CONFIRM_ACTION'.
-    -   **Payload:** 'actionToConfirm' será 'ADD_EXPENSE', e 'data' conterá a categoria e o valor extraídos (dentro de um objeto com a chave 
-'expenses'
-)
-    -   **Response:** Apresente os dados extraídos e peça a confirmação do usuário.
+Extraia valor total e sugira categoria; peça confirmação com "CONFIRM_ACTION" → "ADD_EXPENSE".
 
 ---
 
-FLUXO 6: EXCLUSÃO DE DADOS
-Quando o usuário pedir para excluir um lançamento, uma categoria ou todos os dados, você deve confirmar a ação.
-
-1.  **Ação de Confirmação:** Use 'CONFIRM_ACTION'.
-2.  **Payload:** 'actionToConfirm' será uma das seguintes ações:
-    - 'DELETE_EXPENSE': Para excluir um lançamento específico. Forneça 'category' e 'amount'.
-    - 'DELETE_CATEGORY': Para excluir uma categoria e todos os seus lançamentos.
-    - 'CLEAR_ALL_DATA': Para apagar tudo.
-3.  **Response:** Pergunte ao usuário se ele tem certeza.
----
-
---- REGRAS IMPORTANTES ---
-- VALIDAÇÃO DE CATEGORIA: Ao adicionar uma despesa (
-'ADD_EXPENSE'
-), a categoria DEVE existir no objeto 
-'budgets'
-. Se não existir, você DEVE usar o 
-'FLUXO 2'
- para pedir esclarecimentos ao usuário. Se nenhuma categoria semelhante for encontrada, pergunte ao usuário se ele deseja criar uma nova categoria.
-- SEJA CONCISO: Responda de forma curta e direta, ideal para mobile. Evite frases longas e parágrafos desnecessários.
-- SEJA PROATIVO, NÃO PASSIVO: Se o usuário pedir uma sugestão, CRIE E APRESENTE UMA. Não devolva a pergunta.
-- PRESERVE OS NOMES DAS CATEGORIAS: "jantar fora" deve ser "jantar fora" no JSON. NÃO use underscores.
-- SIGA O FORMATO JSON: Sua resposta DEVE sempre ser um JSON válido.
-- DESCRIÇÕES: Ao adicionar uma despesa, se o usuário fornecer uma descrição, inclua-a no campo 'description'. Se não fornecer, você pode gerar uma descrição resumida com base na categoria e valor.
+FLUXO 6: EXCLUSÃO DE DADOS (sempre confirmar)
+Use "CONFIRM_ACTION" com "actionToConfirm" ∈ { "DELETE_EXPENSE", "DELETE_CATEGORY", "CLEAR_ALL_DATA" }.
 
 ---
 
-FLUXO 7: LANÇAMENTO PARCELADO (PRIORIDADE MÁXIMA)
-Se a mensagem do usuário contiver qualquer padrão de parcelamento (ex: "em 3x", "3 vezes de", "parcelado em 10x"), este fluxo DEVE ser seguido. É a sua prioridade máxima.
+REGRAS IMPORTANTES
+- VALIDAÇÃO DE CATEGORIA: ao adicionar despesa, a categoria DEVE existir em 'budgets'. Se não existir, use FLUXO 2.
+- SEJA CONCISO, PROATIVO e mantenha os nomes das categorias exatamente como estão.
+- SEMPRE responda com JSON válido.
 
-1.  **REGRA CRÍTICA:** NUNCA some os valores para criar um lançamento único. Você DEVE criar múltiplos objetos de despesa, um para cada parcela.
-2.  **Ação:** Sempre 'ADD_EXPENSE'.
-3.  **Payload:** O payload DEVE conter um array 'expenses'. Cada item no array é um objeto que representa uma única parcela.
-    -   Para cada parcela, você DEVE calcular e incluir o campo 'month' (formato 'YYYY-M'), começando do 'viewedMonth' e incrementando para os meses seguintes.
-
-4.  **Cenários:**
-    -   **Cenário 1 (Valor da PARCELA informado):
-        -   Usuário: "Comprei a ração em 3x de 100 reais na categoria Dogs"
-        -   Sua Lógica: Criar 3 despesas de R$ 100 cada.
-        -   Sua Resposta JSON:
-            {
-              "action": "ADD_EXPENSE",
-              "payload": {
-                "expenses": [
-                  { "category": "Dogs 🐶", "amount": 100, "month": "2025-9" },
-                  { "category": "Dogs 🐶", "amount": 100, "month": "2025-10" },
-                  { "category": "Dogs 🐶", "amount": 100, "month": "2025-11" }
-                ]
-              },
-              "response": "Anotado! Lancei a compra da ração em 3 parcelas de R$ 100 na categoria Dogs 🐶."
-            }
-
-    -   **Cenário 2 (Valor TOTAL informado):
-        -   Usuário: "Comprei um PS5 em 10x, paguei 4000 reais em Lazer"
-        -   Sua Lógica: Calcular o valor da parcela (4000 / 10 = 400) e criar 10 despesas de R$ 400 cada.
-        -   Sua Resposta JSON:
-            {
-              "action": "ADD_EXPENSE",
-              "payload": {
-                "expenses": [
-                  { "category": "Lazer 🎉", "amount": 400, "month": "2025-9" },
-                  { "category": "Lazer 🎉", "amount": 400, "month": "2025-10" },
-                  { "category": "Lazer 🎉", "amount": 400, "month": "2025-11" },
-                  { "category": "Lazer 🎉", "amount": 400, "month": "2025-12" },
-                  { "category": "Lazer 🎉", "amount": 400, "month": "2026-1" },
-                  { "category": "Lazer 🎉", "amount": 400, "month": "2026-2" },
-                  { "category": "Lazer 🎉", "amount": 400, "month": "2026-3" },
-                  { "category": "Lazer 🎉", "amount": 400, "month": "2026-4" },
-                  { "category": "Lazer 🎉", "amount": 400, "month": "2026-5" },
-                  { "category": "Lazer 🎉", "amount": 400, "month": "2026-6" }
-                ]
-              },
-              "response": "Ok, lancei a compra do PS5 em 10 parcelas de R$ 400 em Lazer 🎉."
-            }
 ---
+
+FLUXO 7: LANÇAMENTO PARCELADO (NOVA REGRA — PRIORIDADE)
+- NUNCA envie 'month', 'installmentGroupId' ou 'installmentInfo' (o app calcula).
+- Sempre responda com "action": "ADD_EXPENSE" e "payload.expenses" contendo objetos "ExpenseIntent".
+- Formatos:
+
+  **Parcelado:**
+  {
+    "category": "...",
+    "description": "...",
+    "installments": {
+      "count": <n>=2..,
+      // use UM dos dois abaixo:
+      "amountPerInstallment": <valor_da_parcela>,
+      "totalAmount": <valor_total>,
+      // opcionais:
+      "baseMonth": "viewed" | "current",
+      "startOffsetMonths": <int>=0
+    }
+  }
+
+  **Simples:**
+  { "category": "...", "description": "...", "amount": <valor> }
+
+- Exemplo (3x de 100):
+{
+  "action": "ADD_EXPENSE",
+  "payload": {
+    "expenses": [
+      { "category": "Dogs 🐶", "description": "Ração", "installments": { "count": 3, "amountPerInstallment": 100, "baseMonth": "viewed", "startOffsetMonths": 0 } }
+    ]
+  },
+  "response": "Anotado! 3x de R$ 100 em Dogs 🐶."
+}
+
+- Exemplo (10x total 4000):
+{
+  "action": "ADD_EXPENSE",
+  "payload": {
+    "expenses": [
+      { "category": "Lazer 🎉", "description": "PS5", "installments": { "count": 10, "totalAmount": 4000 } }
+    ]
+  },
+  "response": "Ok, 10x a partir deste mês em Lazer 🎉."
+}
 `;
 const ai = new GoogleGenAI({ apiKey: "AIzaSyBodxRZLyiZuSlCE4HBSv2QtmGQnk71Umc" });
 
 // --- SVG ICONS ---
 const PlusIcon = () => (
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M5 12h14"/>
-        <path d="M12 5v14"/>
-    </svg>
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M5 12h14"/>
+    <path d="M12 5v14"/>
+  </svg>
 );
 
 const CameraIcon = () => (
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/>
-        <circle cx="12" cy="13" r="3"/>
-    </svg>
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/>
+    <circle cx="12" cy="13" r="3"/>
+  </svg>
 );
 
 const SendIcon = () => (
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M22 2 11 13"/>
-        <path d="m22 2-7 20-4-9-9-4 20-7z"/>
-    </svg>
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M22 2 11 13"/>
+    <path d="m22 2-7 20-4-9-9-4 20-7z"/>
+  </svg>
 );
 
 const MenuIcon = () => (
@@ -415,89 +372,108 @@ const SegmentedControl = ({ selected, onSelect }: { selected: MainView, onSelect
 };
 
 const KpiCard = ({ title, value, highlight = false }: { title: string, value: string, highlight?: boolean }) => (
-    <div className={`kpi-card ${highlight ? 'kpi-card-highlight' : ''}`}>
-        <span className="kpi-title">{title}</span>
-        <span className="kpi-value">{value}</span>
-    </div>
+  <div className={`kpi-card ${highlight ? 'kpi-card-highlight' : ''}`}>
+    <span className="kpi-title">{title}</span>
+    <span className="kpi-value">{value}</span>
+  </div>
 );
 
-const CategoryCard = ({ category, budget, spent }: { category: string, budget: number, spent: number }) => {
-    if (budget === 0) {
-        return (
-            <div className="category-card empty p-4 shadow-sm">
-                <span className="category-title">{category}</span>
-                <button className="define-budget-cta">Definir orçamento</button>
-            </div>
-        )
-    }
-    const percentage = budget > 0 ? (spent / budget) * 100 : 0;
-    const remaining = budget - spent;
-    const isOverBudget = percentage > 100;
-    let progressColor = 'var(--success-color)';
-    if (isOverBudget) progressColor = 'var(--danger-color)';
-    else if (percentage > 70) progressColor = 'var(--warning-color)';
+const CategoryCard = ({ category, budget, spent, onLongPress }: { category: string, budget: number, spent: number, onLongPress: (category: string) => void }) => {
+  const longPressTimer = useRef<number | null>(null);
 
+  const handleMouseDown = () => {
+    longPressTimer.current = window.setTimeout(() => {
+      onLongPress(category);
+    }, 2000);
+  };
+
+  const handleMouseUp = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+    }
+  };
+
+  if (budget === 0) {
     return (
-        <div className="category-card p-4 shadow-sm">
-            <div className="card-header">
-                <span className="category-title">{category}</span>
-            </div>
-            <div className="progress-bar-container">
-                <div className="progress-bar">
-                    <div className="progress-bar-fill" style={{ width: `${Math.min(percentage, 100)}%`, backgroundColor: progressColor }}></div>
-                </div>
-                <span className="progress-percentage">{percentage.toFixed(0)}%</span>
-            </div>
-            <div className="card-footer">
-                <span className="progress-label">{formatCurrency(spent)} de {formatCurrency(budget)}</span>
-                {isOverBudget ? (
-                    <span className="chip over-budget">Estourou +{formatCurrency(spent - budget)}</span>
-                ) : (
-                    <span className="chip remaining">Ainda tem {formatCurrency(remaining)}</span>
-                )}
-            </div>
+      <div className="category-card empty p-4 shadow-sm" onMouseDown={handleMouseDown} onMouseUp={handleMouseUp} onTouchStart={handleMouseDown} onTouchEnd={handleMouseUp}>
+        <span className="category-title">{category}</span>
+        <button className="define-budget-cta">Definir orçamento</button>
+      </div>
+    )
+  }
+  const percentage = budget > 0 ? (spent / budget) * 100 : 0;
+  const remaining = budget - spent;
+  const isOverBudget = percentage > 100;
+  let progressColor = 'var(--success-color)';
+  if (isOverBudget) progressColor = 'var(--danger-color)';
+  else if (percentage > 70) progressColor = 'var(--warning-color)';
+
+  return (
+    <div className="category-card p-4 shadow-sm" onMouseDown={handleMouseDown} onMouseUp={handleMouseUp} onTouchStart={handleMouseDown} onTouchEnd={handleMouseUp}>
+      <div className="card-header">
+        <span className="category-title">{category}</span>
+      </div>
+      <div className="progress-bar-container">
+        <div className="progress-bar">
+          <div className="progress-bar-fill" style={{ width: `${Math.min(percentage, 100)}%`, backgroundColor: progressColor }}></div>
         </div>
-    );
+        <span className="progress-percentage">{percentage.toFixed(0)}%</span>
+      </div>
+      <div className="card-footer">
+        <span className="progress-label">{formatCurrency(spent)} de {formatCurrency(budget)}</span>
+        {isOverBudget ? (
+          <span className="chip over-budget">Estourou +{formatCurrency(spent - budget)}</span>
+        ) : (
+          <span className="chip remaining">Ainda tem {formatCurrency(remaining)}</span>
+        )}
+      </div>
+    </div>
+  );
 };
 
-const FloatingActionButton = ({ onClick }: { onClick: () => void }) => (
-    <button className="fab" onClick={onClick} aria-label="Adicionar novo lançamento">
-        <PlusIcon />
-    </button>
+const AddCategoryCard = ({ onClick }: { onClick: () => void }) => (
+  <div className="category-card add-category-card" onClick={onClick}>
+    <PlusIcon />
+  </div>
 );
 
-const SummaryView = ({ budgets, expenses, viewedMonth }: { budgets: Budget, expenses: Expense[], viewedMonth: string }) => {
+const FloatingActionButton = ({ onClick }: { onClick: () => void }) => (
+  <button className="fab" onClick={onClick} aria-label="Adicionar novo lançamento">
+    <PlusIcon />
+  </button>
+);
+
+const SummaryView = ({ budgets, expenses, viewedMonth, onAddCategory, onEditCategory }: { budgets: Budget, expenses: Expense[], viewedMonth: string, onAddCategory: () => void, onEditCategory: (category: string) => void }) => {
   const totalBudget = Object.values(budgets).reduce((sum, amount) => sum + amount, 0);
   const totalSpent = expenses.reduce((sum, expense) => sum + expense.amount, 0);
   const totalAvailable = totalBudget - totalSpent;
   const calculateSpentPerCategory = (category: string) => expenses.filter(e => e.category.toLowerCase() === category.toLowerCase()).reduce((sum, e) => sum + e.amount, 0);
   const budgetKeys = Object.keys(budgets);
 
-  if (budgetKeys.length === 0) {
-      return (
-          <div className="view-container empty-state">
-              <p>Nenhum orçamento definido para {formatMonthYear(viewedMonth)}.</p>
-              <p>Use o assistente para criar um!</p>
-          </div>
-      )
-  }
-
   return (
     <div className="view-container summary-view">
-      <div className="kpi-container">
-        <div className="kpi-row">
-          <KpiCard title="Gasto no mês" value={formatCurrency(totalSpent)} />
-          <KpiCard title="Orçado" value={formatCurrency(totalBudget)} />
+      {budgetKeys.length > 0 ? (
+        <div className="kpi-container">
+          <div className="kpi-row">
+            <KpiCard title="Gasto no mês" value={formatCurrency(totalSpent)} />
+            <KpiCard title="Orçado" value={formatCurrency(totalBudget)} />
+          </div>
+          <div className="kpi-row">
+            <KpiCard title="Ainda tem" value={formatCurrency(totalAvailable)} highlight />
+          </div>
         </div>
-        <div className="kpi-row">
-          <KpiCard title="Ainda tem" value={formatCurrency(totalAvailable)} highlight />
+      ) : (
+        <div className="view-container empty-state">
+          <p>Nenhum orçamento definido para {formatMonthYear(viewedMonth)}.</p>
+          <p>Use o assistente ou adicione uma categoria abaixo.</p>
         </div>
-      </div>
+      )}
       <div className="category-cards-container gap-3">
         {budgetKeys.map(category => (
-                <CategoryCard key={category} category={category} budget={budgets[category]} spent={calculateSpentPerCategory(category)} />
-            ))}
-        </div>
+          <CategoryCard key={category} category={category} budget={budgets[category]} spent={calculateSpentPerCategory(category)} onLongPress={onEditCategory} />
+        ))}
+        <AddCategoryCard onClick={onAddCategory} />
+      </div>
     </div>
   );
 };
@@ -511,13 +487,13 @@ const AssistantView = ({ messages, onSendMessage, isLoading }: { messages: ChatM
 
   return (
     <div className="view-container assistant-view">
-        <div className="assistant-greeting"><p>Olá! Como posso ajudar hoje?</p></div>
-        <div className="suggestion-chips">
-            <button onClick={(e) => handleSuggestionClick('Definir orçamentos para o mês', e)}>Definir orçamentos</button>
-            <button onClick={(e) => handleSuggestionClick('Adicionar gasto de R$50 em mercado', e)}>Adicionar gasto</button>
-            <button onClick={(e) => handleSuggestionClick('Quais categorias estão no vermelho?', e)}>Ver categorias no vermelho</button>
-        </div>
-        <ChatInterface messages={messages} onSendMessage={onSendMessage} isLoading={isLoading} input={input} setInput={setInput} />
+      <div className="assistant-greeting"><p>Olá! Como posso ajudar hoje?</p></div>
+      <div className="suggestion-chips">
+        <button onClick={(e) => handleSuggestionClick('Definir orçamentos para o mês', e)}>Definir orçamentos</button>
+        <button onClick={(e) => handleSuggestionClick('Adicionar gasto de R$50 em mercado', e)}>Adicionar gasto</button>
+        <button onClick={(e) => handleSuggestionClick('Quais categorias estão no vermelho?', e)}>Ver categorias no vermelho</button>
+      </div>
+      <ChatInterface messages={messages} onSendMessage={onSendMessage} isLoading={isLoading} input={input} setInput={setInput} />
     </div>
   );
 };
@@ -539,7 +515,7 @@ const SwipeableListItem = ({ children, onDelete }: { children: React.ReactNode, 
   const handleSwipeMove = (clientX: number) => {
     if (!isSwiping) return;
     const deltaX = clientX - startX.current;
-    const newX = Math.min(0, Math.max(-100, deltaX)); // Aumentei o valor máximo de swipe
+    const newX = Math.min(0, Math.max(-100, deltaX));
     setX(newX);
   };
 
@@ -548,8 +524,8 @@ const SwipeableListItem = ({ children, onDelete }: { children: React.ReactNode, 
     setIsSwiping(false);
     if (itemRef.current) {
       itemRef.current.style.transition = 'transform 0.3s ease';
-      if (x < -50) { // Ajustei o ponto de ativação do swipe
-        setX(-100); // Ajustei para o novo tamanho
+      if (x < -50) {
+        setX(-100);
       } else {
         setX(0);
       }
@@ -594,35 +570,95 @@ const SwipeableListItem = ({ children, onDelete }: { children: React.ReactNode, 
   );
 };
 
-const ExpenseList = ({ expenses, onDeleteExpense }: { expenses: Expense[], onDeleteExpense: (id: string) => void }) => {
+const ExpenseList = ({ expenses, allExpenses, onDeleteExpense }: { expenses: Expense[], allExpenses: Expense[], onDeleteExpense: (id: string) => void }) => {
   if (expenses.length === 0) {
     return (
       <div className="view-container empty-state"><p className="empty-list-message">Nenhum lançamento neste mês.</p></div>
     );
   }
-  
-  // Função para truncar texto com reticências
+
   const truncateText = (text: string, maxLength: number) => {
     if (!text) return '';
     return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
   };
-  
+
+  const getInstallmentInfo = (expense: Expense, allExpenses: Expense[]): string | null => {
+    if (expense.installmentInfo) {
+      return expense.installmentInfo;
+    }
+    if (!expense.installmentGroupId) {
+      return null;
+    }
+    const installmentGroup = allExpenses.filter(e => e.installmentGroupId === expense.installmentGroupId);
+    installmentGroup.sort((a, b) => {
+      const [yearA, monthA] = a.month.split('-').map(Number);
+      const [yearB, monthB] = b.month.split('-').map(Number);
+      if (yearA !== yearB) return yearA - yearB;
+      return monthA - monthB;
+    });
+    const currentIndex = installmentGroup.findIndex(e => e.id === expense.id);
+    if (currentIndex === -1) {
+      return null;
+    }
+    return `${currentIndex + 1}/${installmentGroup.length}`;
+  };
+
   return (
     <div className="view-container expense-list">
       <ul>
-        {expenses.slice().reverse().map((expense) => (
-          <SwipeableListItem key={expense.id} onDelete={() => onDeleteExpense(expense.id)}>
-            <div className="expense-details">
-              <span className="expense-category">{expense.category}</span>
-              {expense.description && <span className="expense-description">{truncateText(expense.description, 30)}</span>}
-              {expense.installmentInfo && <span className="expense-installment-chip">{expense.installmentInfo}</span>}
-            </div>
-            <div className="expense-right-col">
-              <span className="expense-date">{new Date(expense.date).toLocaleDateString('pt-BR')}</span>
-              <span className="expense-amount">{formatCurrency(expense.amount)}</span>
-            </div>
-          </SwipeableListItem>
-        ))}
+        {expenses.slice().reverse().map((expense) => {
+          const installmentInfo = getInstallmentInfo(expense, allExpenses);
+
+          if (expense.installmentGroupId || expense.installmentInfo) {
+            console.log('Parcelled expense:', expense.category, expense.amount, expense.installmentGroupId, expense.installmentInfo, installmentInfo);
+          }
+
+          return (
+            <SwipeableListItem key={expense.id} onDelete={() => onDeleteExpense(expense.id)}>
+              <div
+                className="expense-row"
+                style={
+                  (() => {
+                    // cor de acento por categoria (estável)
+                    let h = 0;
+                    for (let i = 0; i < expense.category.length; i++) {
+                      h = (h << 5) - h + expense.category.charCodeAt(i);
+                      h |= 0;
+                    }
+                    const hue = Math.abs(h) % 360;
+                    return {
+                      // usa CSS vars para o item
+                      // barra: forte | chip: bem claro
+                      ['--item-accent' as any]: `hsl(${hue} 85% 45%)`,
+                      ['--item-accent-bg' as any]: `hsl(${hue} 95% 95%)`,
+                    };
+                  })()
+                }
+              >
+                <div className="expense-accent" />
+
+                <div className="expense-left">
+                  <div className="expense-title-row">
+                    <span className="expense-category">{expense.category}</span>
+                    {/* chip de parcela sobe pra linha do título */}
+                    {installmentInfo && (
+                      <span className="expense-installment-chip">{installmentInfo}</span>
+                    )}
+                  </div>
+
+                  {expense.description && (
+                    <div className="expense-description">{truncateText(expense.description, 38)}</div>
+                  )}
+                </div>
+
+                <div className="expense-right">
+                  <div className="expense-amount">{formatCurrency(expense.amount)}</div>
+                  <div className="expense-date">{new Date(expense.date).toLocaleDateString('pt-BR')}</div>
+                </div>
+              </div>
+            </SwipeableListItem>  
+          );
+        })}
       </ul>
     </div>
   );
@@ -651,11 +687,21 @@ const ChatInterface = ({ messages, onSendMessage, isLoading, input, setInput }: 
     }
   };
 
-  const handleImageSelection = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const fileToGenerativePart = async (file: File) => {
+    const base64EncodedDataPromise = new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
+      reader.readAsDataURL(file);
+    });
+    return {
+      inlineData: { data: await base64EncodedDataPromise, mimeType: file.type },
+    };
+  };
+
+  const handleImageSelection = async (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files) {
       const files = Array.from(event.target.files);
       setSelectedImages(files);
-      // Automatically send the message if there's no text input
       if (!input.trim()) {
         onSendMessage("", files);
         setInput('');
@@ -724,7 +770,9 @@ const ChatInterface = ({ messages, onSendMessage, isLoading, input, setInput }: 
 
 function App() {
   const [mainView, setMainView] = useState<MainView>(() => (localStorage.getItem('mainView') as MainView) || 'summary');
-  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isExpenseFormOpen, setIsExpenseFormOpen] = useState(false);
+  const [isCategoryFormOpen, setIsCategoryFormOpen] = useState(false);
+  const [editingCategory, setEditingCategory] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     date: new Date().toISOString().split('T')[0],
     description: '',
@@ -737,19 +785,22 @@ function App() {
   const [viewedMonth, setViewedMonth] = useState(() => localStorage.getItem('viewedMonth') || getMonthYear());
   const [budgets, setBudgets] = useState<Budget>({});
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [allExpenses, setAllExpenses] = useState<Expense[]>([]);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([{ role: 'model', text: 'Olá! Sou seu assistente financeiro.' }]);
   const [isLoading, setIsLoading] = useState(false);
-  const [isFormSubmitting, setIsFormSubmitting] = useState(false); // Novo estado para carregamento do formulário
+  const [isFormSubmitting, setIsFormSubmitting] = useState(false);
   const [pendingAction, setPendingAction] = useState<any | null>(null);
 
   useEffect(() => {
     async function loadData() {
-        const [savedBudgets, savedExpenses] = await Promise.all([
-            getBudgets(viewedMonth),
-            getExpenses(viewedMonth)
-        ]);
-        setBudgets(savedBudgets || {});
-        setExpenses(savedExpenses || []);
+      const [savedBudgets, savedExpenses, allSavedExpenses] = await Promise.all([
+        getBudgets(viewedMonth),
+        getExpenses(viewedMonth),
+        getAllExpenses()
+      ]);
+      setBudgets(savedBudgets || {});
+      setExpenses(savedExpenses || []);
+      setAllExpenses(allSavedExpenses || []);
     }
     loadData();
   }, [viewedMonth]);
@@ -770,9 +821,10 @@ function App() {
   const handleDeleteExpense = async (expenseId: string) => {
     await deleteExpense(expenseId);
     setExpenses(prev => prev.filter(exp => exp.id !== expenseId));
+    setAllExpenses(prev => prev.filter(exp => exp.id !== expenseId));
   };
 
-   const fileToGenerativePart = async (file: File) => {
+  const fileToGenerativePart = async (file: File) => {
     const base64EncodedDataPromise = new Promise<string>((resolve) => {
       const reader = new FileReader();
       reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
@@ -783,7 +835,90 @@ function App() {
     };
   };
 
-   const handleSendMessage = async (userInput: string, images?: File[]) => {
+  /** ===== Novo executor local de payload ADD_EXPENSE (sem IA calcular mês) ===== */
+  const applyAddExpensePayload = async (payload: AddExpensePayload) => {
+    if (!payload?.expenses?.length) return;
+
+    let maxMonth = currentMonth;
+
+    for (const req of payload.expenses) {
+      // Validação local de categoria (melhor UX)
+      if (!Object.keys(budgets).some(k => k.toLowerCase() === req.category.toLowerCase())) {
+        setChatHistory(prev => [...prev, { role: 'model', text: `Categoria '${req.category}' não existe neste mês. Quer criá-la ou usar outra?` }]);
+        continue;
+      }
+
+      const baseMonthSrc = req.installments?.baseMonth || 'viewed';
+      const baseMonthKey = baseMonthSrc === 'current' ? currentMonth : viewedMonth;
+      const startOffset = req.installments?.startOffsetMonths ?? 0;
+
+      if (req.installments?.count && req.installments.count > 1) {
+        // Parcelado
+        const count = Number(req.installments.count);
+        const groupId = `installment_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+
+        let perParcelAmounts: number[] | null = null;
+        if (typeof req.installments.amountPerInstallment === 'number') {
+          perParcelAmounts = Array(count).fill(Number(req.installments.amountPerInstallment));
+        } else if (typeof req.installments.totalAmount === 'number') {
+          perParcelAmounts = splitAmountIntoInstallments(Number(req.installments.totalAmount), count);
+        }
+
+        if (!perParcelAmounts) {
+          setChatHistory(prev => [...prev, { role: 'model', text: `Não entendi o valor das parcelas em '${req.category}'. Informe total ou valor por parcela.` }]);
+          continue;
+        }
+
+        for (let i = 0; i < count; i++) {
+          const monthKey = addMonthsToMonthKey(baseMonthKey, startOffset + i);
+          const processed: Expense = {
+            id: `exp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}_${i}`,
+            category: req.category,
+            amount: perParcelAmounts[i],
+            month: monthKey,
+            date: new Date().toISOString(),
+            description: req.description,
+            installmentGroupId: groupId,
+            installmentInfo: `${i + 1}/${count}`,
+          };
+          await saveExpense(processed);
+          if (processed.month === viewedMonth) setExpenses(prev => [...prev, processed]);
+          setAllExpenses(prev => [...prev, processed]);
+
+          const [ey, em] = processed.month.split('-').map(Number);
+          const [cy, cm] = maxMonth.split('-').map(Number);
+          if (ey > cy || (ey === cy && em > cm)) maxMonth = processed.month;
+        }
+
+      } else if (typeof req.amount === 'number') {
+        // Simples
+        const monthKey = addMonthsToMonthKey(baseMonthKey, startOffset);
+        const processed: Expense = {
+          id: `exp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+          category: req.category,
+          amount: Number(req.amount),
+          month: monthKey,
+          date: new Date().toISOString(),
+          description: req.description,
+        };
+        await saveExpense(processed);
+        if (processed.month === viewedMonth) setExpenses(prev => [...prev, processed]);
+        setAllExpenses(prev => [...prev, processed]);
+
+        const [ey, em] = processed.month.split('-').map(Number);
+        const [cy, cm] = maxMonth.split('-').map(Number);
+        if (ey > cy || (ey === cy && em > cm)) maxMonth = processed.month;
+
+      } else {
+        setChatHistory(prev => [...prev, { role: 'model', text: `Lançamento em '${req.category}' sem valor reconhecido.` }]);
+      }
+    }
+
+    if (maxMonth !== currentMonth) setCurrentMonth(maxMonth);
+  };
+
+  /** ===== Chat com IA (texto livre, imagens, confirmações, etc.) ===== */
+  const handleSendMessage = async (userInput: string, images?: File[]) => {
     setIsLoading(true);
 
     const imageParts = images ? await Promise.all(images.map(fileToGenerativePart)) : [];
@@ -804,23 +939,23 @@ function App() {
 
     let prompt;
     if (pendingAction) {
-        prompt = `
-          Histórico da conversa:
-          ${historyForPrompt}
+      prompt = `
+Histórico da conversa:
+${historyForPrompt}
 
-          Contexto: O usuário está respondendo a uma pergunta de confirmação.
-          Ação pendente: ${JSON.stringify(pendingAction)}
-          Estado atual: ${JSON.stringify(currentState)}
-          Nova mensagem do usuário: "${userInput}"
-        `;
+Contexto: O usuário está respondendo a uma pergunta de confirmação.
+Ação pendente: ${JSON.stringify(pendingAction)}
+Estado atual: ${JSON.stringify(currentState)}
+Nova mensagem do usuário: "${userInput}"
+      `;
     } else {
-        prompt = `
-          Histórico da conversa:
-          ${historyForPrompt}
+      prompt = `
+Histórico da conversa:
+${historyForPrompt}
 
-          Estado atual: ${JSON.stringify(currentState)}
-          Nova mensagem do usuário: "${userInput}"
-        `;
+Estado atual: ${JSON.stringify(currentState)}
+Nova mensagem do usuário: "${userInput}"
+      `;
     }
 
     try {
@@ -840,7 +975,7 @@ function App() {
 
       const aiResponseText = response.text;
       const aiResponseJson = JSON.parse(aiResponseText);
-      
+
       writeLog('INTERACTION', {
         userInput,
         imageAttached: (images || []).length > 0,
@@ -859,7 +994,8 @@ function App() {
         case 'CONFIRM_ACTION':
           setPendingAction(payload);
           break;
-        case 'SET_BUDGET':
+
+        case 'SET_BUDGET': {
           const monthToSet = payload.month || viewedMonth;
           const newBudgets = { ...budgets, ...payload.budget };
           await saveBudgets(monthToSet, newBudgets);
@@ -873,109 +1009,128 @@ function App() {
           }
           setPendingAction(null);
           break;
-        case 'ADD_EXPENSE':
-          // Verificar se os lançamentos são parcelados
-          // Um lançamento é parcelado quando tem um installmentGroupId definido pela IA
-          const isInstallment = payload.expenses.length > 1 && payload.expenses.every((exp: any) => exp.installmentGroupId);
-          
-          let maxMonth = currentMonth;
-          
-          for (let i = 0; i < payload.expenses.length; i++) {
-            const exp: any = payload.expenses[i];
-            const monthToAdd = exp.month || viewedMonth;
-            
-            // Se for um lançamento parcelado, usar o installmentGroupId da IA
-            // Caso contrário, não definir installmentGroupId
-            const installmentGroupId = isInstallment ? exp.installmentGroupId : undefined;
-            
-            const processedExpense: Expense = {
-              id: `exp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_${i}`,
-              category: exp.category,
-              amount: exp.amount,
-              month: monthToAdd,
-              date: new Date().toISOString(),
-              description: exp.description, // Incluir descrição se presente
-              installmentGroupId: installmentGroupId,
-              installmentInfo: isInstallment && exp.installmentInfo ? exp.installmentInfo : undefined,
-            };
-            
-            await saveExpense(processedExpense);
-            if (processedExpense.month === viewedMonth) {
-              setExpenses(prev => [...prev, processedExpense]);
-            }
-            
-            const [expYear, expMonth] = processedExpense.month.split('-').map(Number);
-            const [currentMaxYear, currentMaxMonthNum] = maxMonth.split('-').map(Number);
-            if (expYear > currentMaxYear || (expYear === currentMaxYear && expMonth > currentMaxMonthNum)) {
-              maxMonth = processedExpense.month;
-            }
-          }
-          
-          if (maxMonth !== currentMonth) {
-            setCurrentMonth(maxMonth);
-          }
-          
-          setPendingAction(null);
-          break;
-        case 'DELETE_EXPENSE':
-            const { category: catToDelete, amount: amountToDelete } = payload;
-            const expenseToDelete = expenses.find(expense => expense.category.toLowerCase() === catToDelete.toLowerCase() && expense.amount === amountToDelete);
-  
-            if (expenseToDelete) {
-              await deleteExpense(expenseToDelete.id);
-              setExpenses(prev => prev.filter(exp => exp.id !== expenseToDelete.id));
-            }
-            setPendingAction(null);
-            break;
-        case 'NEXT_MONTH':
-            const [year, month] = viewedMonth.split('-').map(Number);
-            const nextDate = new Date(year, month, 1);
-            const newMonthKey = `${nextDate.getFullYear()}-${nextDate.getMonth() + 1}`;
-            
-            if (payload.copyBudgets) {
-              const currentBudgets = await getBudgets(viewedMonth);
-              if(currentBudgets) {
-                  await saveBudgets(newMonthKey, currentBudgets);
+        }
+
+        case 'ADD_EXPENSE': {
+          // Novo contrato (sem month): aplicar localmente
+          const looksOld = Array.isArray(payload?.expenses) && payload.expenses.some((e: any) => e?.month);
+          if (looksOld) {
+            // === Compatibilidade com payloads antigos ===
+            const isInstallment = payload.expenses.some((exp: any) => exp.installmentGroupId);
+            let maxMonth = currentMonth;
+            const installmentGroupIdForGroup = isInstallment
+              ? payload.expenses.find((exp: any) => exp.installmentGroupId)?.installmentGroupId
+              : undefined;
+
+            for (let i = 0; i < payload.expenses.length; i++) {
+              const exp: any = payload.expenses[i];
+              const monthToAdd = exp.month || viewedMonth;
+              const installmentGroupId = isInstallment
+                ? (exp.installmentGroupId || installmentGroupIdForGroup)
+                : undefined;
+
+              const processedExpense: Expense = {
+                id: `exp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_${i}`,
+                category: exp.category,
+                amount: exp.amount,
+                month: monthToAdd,
+                date: new Date().toISOString(),
+                description: exp.description,
+                installmentGroupId: installmentGroupId,
+                installmentInfo: isInstallment && exp.installmentInfo ? exp.installmentInfo : undefined,
+              };
+
+              await saveExpense(processedExpense);
+              if (processedExpense.month === viewedMonth) {
+                setExpenses(prev => [...prev, processedExpense]);
+              }
+              setAllExpenses(prev => [...prev, processedExpense]);
+
+              const [expYear, expMonth] = processedExpense.month.split('-').map(Number);
+              const [currentMaxYear, currentMaxMonthNum] = maxMonth.split('-').map(Number);
+              if (expYear > currentMaxYear || (expYear === currentMaxYear && expMonth > currentMaxMonthNum)) {
+                maxMonth = processedExpense.month;
               }
             }
-            setViewedMonth(newMonthKey);
-            setCurrentMonth(newMonthKey); // Also update the current month context
-            setPendingAction(null);
-            break;
-        case 'VIEW_PREVIOUS_MONTH':
-            const { year: pYear, month: pMonth } = payload;
-            setViewedMonth(`${pYear}-${pMonth}`);
-            setPendingAction(null);
-            break;
-        case 'CLEAR_ALL_DATA':
+            if (maxMonth !== currentMonth) setCurrentMonth(maxMonth);
+          } else {
+            // === Novo fluxo ===
+            await applyAddExpensePayload(payload as AddExpensePayload);
+          }
+          setPendingAction(null);
+          break;
+        }
+
+        case 'DELETE_EXPENSE': {
+          const { category: catToDelete, amount: amountToDelete } = payload;
+          const expenseToDelete = expenses.find(expense => expense.category.toLowerCase() === catToDelete.toLowerCase() && expense.amount === amountToDelete);
+
+          if (expenseToDelete) {
+            await deleteExpense(expenseToDelete.id);
+            setExpenses(prev => prev.filter(exp => exp.id !== expenseToDelete.id));
+            setAllExpenses(prev => prev.filter(exp => exp.id !== expenseToDelete.id));
+          }
+          setPendingAction(null);
+          break;
+        }
+
+        case 'NEXT_MONTH': {
+          const [year, month] = viewedMonth.split('-').map(Number);
+          const nextDate = new Date(year, month, 1);
+          const newMonthKey = `${nextDate.getFullYear()}-${nextDate.getMonth() + 1}`;
+
+          if (payload.copyBudgets) {
+            const currentBudgets = await getBudgets(viewedMonth);
+            if(currentBudgets) {
+              await saveBudgets(newMonthKey, currentBudgets);
+            }
+          }
+          setViewedMonth(newMonthKey);
+          setCurrentMonth(newMonthKey);
+          setPendingAction(null);
+          break;
+        }
+
+        case 'VIEW_PREVIOUS_MONTH': {
+          const { year: pYear, month: pMonth } = payload;
+          setViewedMonth(`${pYear}-${pMonth}`);
+          setPendingAction(null);
+          break;
+        }
+
+        case 'CLEAR_ALL_DATA': {
           await clearAllData();
           localStorage.removeItem('mainView');
           localStorage.removeItem('currentMonth');
           localStorage.removeItem('viewedMonth');
-          
+
           setBudgets({});
           setExpenses([]);
-          
+          setAllExpenses([]);
+
           const currentMonthKey = getMonthYear();
           setViewedMonth(currentMonthKey);
           setCurrentMonth(currentMonthKey);
           setPendingAction(null);
           break;
-        case 'DELETE_CATEGORY':
+        }
+
+        case 'DELETE_CATEGORY': {
           const { category: categoryToDelete } = payload;
           await deleteCategoryFromDB(categoryToDelete, viewedMonth);
-          
+
           const updatedBudgets = { ...budgets };
           delete updatedBudgets[categoryToDelete];
           setBudgets(updatedBudgets);
-          
+
           const updatedExpenses = expenses.filter(expense => expense.category.toLowerCase() !== categoryToDelete.toLowerCase());
           setExpenses(updatedExpenses);
+          setAllExpenses(prev => prev.filter(expense => expense.category.toLowerCase() !== categoryToDelete.toLowerCase()));
           setPendingAction(null);
           break;
+        }
+
         case 'CANCEL_ACTION':
-          setPendingAction(null);
-          break;
         case 'GREETING':
         case 'UNKNOWN':
         default:
@@ -989,7 +1144,7 @@ function App() {
       console.error("Error calling Gemini API:", error);
       writeLog('ERROR', {
         userInput,
-        prompt, // Log the prompt that caused the error
+        prompt,
         error: {
           message: error instanceof Error ? error.message : String(error),
           stack: error instanceof Error ? error.stack : undefined,
@@ -1006,81 +1161,59 @@ function App() {
   const handleFormChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value, type } = e.target;
     const checked = (e.target as HTMLInputElement).checked;
-    
-    // Para o campo de valor, formatar enquanto o usuário digita
+
     if (name === 'amount') {
-      // Remover tudo exceto números e vírgula
       let formattedValue = value.replace(/[^0-9,]/g, '');
-      
-      // Garantir que só tenha uma vírgula
       const parts = formattedValue.split(',');
       if (parts.length > 2) {
         formattedValue = parts[0] + ',' + parts.slice(1).join('');
       }
-      
-      // Limitar a 2 casas decimais
       if (parts[1] && parts[1].length > 2) {
         formattedValue = parts[0] + ',' + parts[1].substring(0, 2);
       }
-      
-      setFormData(prev => ({
-        ...prev,
-        [name]: formattedValue
-      }));
+      setFormData(prev => ({ ...prev, [name]: formattedValue }));
     } else {
-      setFormData(prev => ({
-        ...prev,
-        [name]: type === 'checkbox' ? checked : value
-      }));
+      setFormData(prev => ({ ...prev, [name]: type === 'checkbox' ? checked : value }));
     }
   };
 
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Iniciar o estado de carregamento
     setIsFormSubmitting(true);
-    
     try {
       if (formData.isInstallment) {
-        // Adicionar lançamento parcelado
         const installmentCount = parseInt(formData.installmentCount);
-        const amount = parseFloat(formData.amount.replace(',', '.'));
-        const installmentAmount = amount / installmentCount;
-        
-        const expensesToAdd = [];
-        const [year, month] = viewedMonth.split('-').map(Number);
-        
-        for (let i = 0; i < installmentCount; i++) {
-          const expenseMonth = new Date(year, month - 1 + i);
-          const monthKey = `${expenseMonth.getFullYear()}-${expenseMonth.getMonth() + 1}`;
-          
-          expensesToAdd.push({
+        const total = parseFloat(formData.amount.replace(',', '.'));
+
+        const payload: AddExpensePayload = {
+          expenses: [{
             category: formData.category,
-            amount: installmentAmount,
-            month: monthKey,
-            date: formData.date
-          });
-        }
-        
-        // Usar a função handleSendMessage para adicionar as despesas
-        let message = `Adicione despesas parceladas: ${installmentCount}x de R$${installmentAmount.toFixed(2)} em ${formData.category}`;
-        if (formData.description) {
-          message += ` com descrição: ${formData.description}`;
-        }
-        await handleSendMessage(message);
+            description: formData.description || undefined,
+            installments: {
+              count: installmentCount,
+              totalAmount: total,
+              baseMonth: 'viewed',
+              startOffsetMonths: 0
+            }
+          }]
+        };
+
+        await applyAddExpensePayload(payload);
+        setChatHistory(prev => [...prev, { role: 'model', text: `Ok! Lancei ${installmentCount}x a partir deste mês em ${formData.category}.` }]);
       } else {
-        // Adicionar lançamento simples
         const amount = parseFloat(formData.amount.replace(',', '.'));
-        let message = `Adicione despesa de R$${amount.toFixed(2)} em ${formData.category}`;
-        if (formData.description) {
-          message += ` com descrição: ${formData.description}`;
-        }
-        await handleSendMessage(message);
+        const payload: AddExpensePayload = {
+          expenses: [{
+            category: formData.category,
+            description: formData.description || undefined,
+            amount
+          }]
+        };
+        await applyAddExpensePayload(payload);
+        setChatHistory(prev => [...prev, { role: 'model', text: `Lancei ${formatCurrency(amount, true)} em ${formData.category}.` }]);
       }
-      
-      // Fechar o formulário e resetar os dados
-      setIsFormOpen(false);
+
+      setIsExpenseFormOpen(false);
       setFormData({
         date: new Date().toISOString().split('T')[0],
         description: '',
@@ -1092,15 +1225,24 @@ function App() {
     } catch (error) {
       console.error("Error submitting form:", error);
     } finally {
-      // Finalizar o estado de carregamento
       setIsFormSubmitting(false);
     }
   };
 
+  const handleOpenAddCategory = () => {
+    setEditingCategory(null);
+    setIsCategoryFormOpen(true);
+  };
+
+  const handleOpenEditCategory = (category: string) => {
+    setEditingCategory(category);
+    setIsCategoryFormOpen(true);
+  };
+
   const renderMainView = () => {
     switch (mainView) {
-      case 'summary': return <SummaryView budgets={budgets} expenses={expenses} viewedMonth={viewedMonth} />;
-      case 'entries': return <ExpenseList expenses={expenses} onDeleteExpense={handleDeleteExpense} />;
+      case 'summary': return <SummaryView budgets={budgets} expenses={expenses} viewedMonth={viewedMonth} onAddCategory={handleOpenAddCategory} onEditCategory={handleOpenEditCategory} />;
+      case 'entries': return <ExpenseList expenses={expenses} allExpenses={allExpenses} onDeleteExpense={handleDeleteExpense} />;
       case 'assistant': return <AssistantView messages={chatHistory} onSendMessage={handleSendMessage} isLoading={isLoading} />;
       default: return null;
     }
@@ -1123,7 +1265,7 @@ function App() {
               disabled={isFormSubmitting}
             />
           </div>
-          
+
           <div className="form-group">
             <label htmlFor="category">Categoria:</label>
             <select
@@ -1140,7 +1282,7 @@ function App() {
               ))}
             </select>
           </div>
-          
+
           <div className="form-group">
             <label htmlFor="description">Descrição:</label>
             <input
@@ -1153,7 +1295,7 @@ function App() {
               disabled={isFormSubmitting}
             />
           </div>
-          
+
           <div className="form-group">
             <label htmlFor="amount">Valor (R$):</label>
             <input
@@ -1167,7 +1309,7 @@ function App() {
               disabled={isFormSubmitting}
             />
           </div>
-          
+
           <div className="form-group checkbox-group">
             <input
               type="checkbox"
@@ -1179,7 +1321,7 @@ function App() {
             />
             <label htmlFor="isInstallment">Lançamento parcelado</label>
           </div>
-          
+
           {formData.isInstallment && (
             <div className="form-group">
               <label htmlFor="installmentCount">Número de parcelas:</label>
@@ -1197,9 +1339,9 @@ function App() {
               </select>
             </div>
           )}
-          
+
           <div className="form-actions">
-            <button type="button" onClick={() => setIsFormOpen(false)} disabled={isFormSubmitting}>Cancelar</button>
+            <button type="button" onClick={() => setIsExpenseFormOpen(false)} disabled={isFormSubmitting}>Cancelar</button>
             <button type="submit" disabled={isFormSubmitting}>
               {isFormSubmitting ? "Adicionando..." : "Adicionar"}
             </button>
@@ -1209,26 +1351,108 @@ function App() {
     </div>
   );
 
+  const CategoryForm = ({
+    isOpen,
+    onClose,
+    onSubmit,
+    initialData,
+  }: {
+    isOpen: boolean;
+    onClose: () => void;
+    onSubmit: (data: { name: string; budget: number }) => void;
+    initialData?: { name: string; budget: number };
+  }) => {
+    const [name, setName] = useState('');
+    const [budget, setBudget] = useState('');
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    useEffect(() => {
+      if (initialData) {
+        setName(initialData.name);
+        setBudget(initialData.budget.toString());
+      } else {
+        setName('');
+        setBudget('');
+      }
+    }, [initialData]);
+
+    if (!isOpen) return null;
+
+    const handleSubmit = async (e: React.FormEvent) => {
+      e.preventDefault();
+      setIsSubmitting(true);
+      await onSubmit({ name, budget: parseFloat(budget.replace(',', '.')) });
+      setIsSubmitting(false);
+      onClose();
+    };
+
+    return (
+      <div className="modal-overlay">
+        <div className="modal-content">
+          <h2>{initialData ? 'Editar' : 'Adicionar'} Categoria</h2>
+          <form onSubmit={handleSubmit}>
+            <div className="form-group">
+              <label htmlFor="category-name">Nome:</label>
+              <input
+                type="text"
+                id="category-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                required
+                disabled={isSubmitting || !!initialData}
+              />
+            </div>
+            <div className="form-group">
+              <label htmlFor="category-budget">Orçamento (R$):</label>
+              <input
+                type="text"
+                id="category-budget"
+                value={budget}
+                onChange={(e) => setBudget(e.target.value)}
+                placeholder="0,00"
+                required
+                disabled={isSubmitting}
+              />
+            </div>
+            <div className="form-actions">
+              <button type="button" onClick={onClose} disabled={isSubmitting}>
+                Cancelar
+              </button>
+              <button type="submit" disabled={isSubmitting}>
+                {isSubmitting ? 'Salvando...' : 'Salvar'}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    );
+  };
+
+  const handleCategoryFormSubmit = async (data: { name: string; budget: number }) => {
+    const newBudgets = { ...budgets, [data.name]: data.budget };
+    await saveBudgets(viewedMonth, newBudgets);
+    setBudgets(newBudgets);
+  };
+
   return (
     <div className="app-container">
       <AppHeader viewedMonth={viewedMonth} onMonthChange={handleMonthChange} currentMonth={currentMonth} />
       <SegmentedControl selected={mainView} onSelect={setMainView} />
       <main className="main-content">
         {renderMainView()}
-        {isFormOpen && <AddExpenseForm />}
+        {isExpenseFormOpen && <AddExpenseForm />}
+        <CategoryForm
+          isOpen={isCategoryFormOpen}
+          onClose={() => setIsCategoryFormOpen(false)}
+          onSubmit={handleCategoryFormSubmit}
+          initialData={editingCategory ? { name: editingCategory, budget: budgets[editingCategory] || 0 } : undefined}
+        />
         {mainView === 'entries' && (
-          <FloatingActionButton onClick={() => setIsFormOpen(true)} />
+          <FloatingActionButton onClick={() => setIsExpenseFormOpen(true)} />
         )}
       </main>
     </div>
   );
-}
-
-// --- SERVICE WORKER & RENDER ---
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(console.error);
-  });
 }
 
 const root = ReactDOM.createRoot(document.getElementById('root') as HTMLElement);
