@@ -1,3 +1,4 @@
+
 /* CSS Variables */
 :root {
   --background-color: #f0f4f8;
@@ -118,7 +119,20 @@ body {
 
 /* Summary View: Category Cards */
 .category-cards-container { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 0.75rem; }
-.category-card { background-color: var(--container-bg); border: 1px solid var(--border-color); border-radius: 8px; box-shadow: var(--shadow-sm); padding: 0.75rem; }
+.category-card { 
+  background-color: var(--container-bg); 
+  border: 1px solid var(--border-color); 
+  border-radius: 8px; 
+  box-shadow: var(--shadow-sm); 
+  padding: 0.75rem; 
+  cursor: pointer;
+  transition: all 0.3s ease;
+  overflow: hidden;
+}
+.category-card.expanded {
+  box-shadow: var(--shadow);
+  transform: translateY(-2px);
+}
 .category-card.empty { display: flex; justify-content: space-between; align-items: center; }
 .define-budget-cta { background-color: var(--accent-color-light); color: var(--accent-color); border: none; padding: 0.5rem 1rem; border-radius: 9999px; font-weight: 600; cursor: pointer; }
 .card-header, .card-footer { display: flex; align-items: center; justify-content: space-between; }
@@ -136,6 +150,83 @@ body {
 .category-card .progress-bar-fill[style*="var(--danger-color)"] { background-color: var(--danger-color); }
 .category-card .progress-bar-fill[style*="var(--warning-color)"] { background-color: var(--warning-color); }
 .category-card .progress-bar-fill[style*="var(--success-color)"] { background-color: var(--success-color); }
+
+/* Expanded category card styles */
+.edit-button {
+  background: none;
+  border: none;
+  padding: 0.25rem;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--secondary-text);
+  transition: all 0.2s ease;
+}
+
+.edit-button:hover {
+  background-color: var(--background-color);
+  color: var(--primary-text);
+}
+
+.expanded-content {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-color);
+  animation: slide-down 0.3s ease-out;
+}
+
+.expenses-list {
+  margin-bottom: 1rem;
+}
+
+.expenses-list h4 {
+  font-size: 0.875rem;
+  color: var(--secondary-text);
+  margin-bottom: 0.5rem;
+}
+
+.expense-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.expense-item:last-child {
+  border-bottom: none;
+}
+
+.expense-item .expense-description {
+  font-size: 0.875rem;
+  color: var(--primary-text);
+  flex: 1;
+}
+
+.expense-item .expense-amount {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--primary-text);
+  margin-left: 0.5rem;
+}
+
+.view-all-button {
+  width: 100%;
+  padding: 0.5rem;
+  background-color: var(--background-color);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--secondary-text);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.view-all-button:hover {
+  background-color: var(--accent-color-light);
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+}
 
 .add-category-card {
   display: flex;

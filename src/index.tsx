@@ -1,7 +1,7 @@
 import { GoogleGenAI } from '@google/genai';
 import { useEffect, useRef, useState } from 'react';
 import ReactDOM from 'react-dom/client';
-import { clearAllData, deleteCategoryFromDB, deleteExpense, getBudgets, getExpenses, getAllExpenses, saveBudgets, saveExpense } from './db';
+import { clearAllData, deleteCategoryFromDB, deleteExpense, getBudgets, getExpenses, getAllExpenses, saveBudgets, saveExpense } from '@/utils/db';
 
 // --- TYPES ---
 type MainView = 'summary' | 'entries' | 'assistant';
@@ -521,36 +521,26 @@ const KpiCard = ({ title, value, highlight = false }: { title: string, value: st
   </div>
 );
 
-const CategoryCard = ({ category, budget, spent, onLongPress, onClick }: { category: string, budget: number, spent: number, onLongPress: (category: string) => void, onClick: (category: string) => void }) => {
-  const longPressTimer = useRef<number | null>(null);
-
-  const handleMouseDown = () => {
-    longPressTimer.current = window.setTimeout(() => {
-      onLongPress(category);
-      longPressTimer.current = null; // Clear timer after long press
-    }, 700); // Reduced long press time for better UX
+const CategoryCard = ({ category, budget, spent, onEdit, onViewExpenses, expenses }: { category: string, budget: number, spent: number, onEdit: (category: string) => void, onViewExpenses: (category: string) => void, expenses?: Expense[] }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+  
+  const handleCardClick = () => {
+    setIsExpanded(!isExpanded);
   };
 
-  const handleMouseUp = () => {
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current);
-      longPressTimer.current = null;
-      onClick(category); // Trigger single click if not a long press
-    }
+  const handleEditClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onEdit(category);
   };
 
-  const handleTouchEnd = (e: React.TouchEvent) => {
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current);
-      longPressTimer.current = null;
-      onClick(category); // Trigger single click if not a long press
-    }
-    e.preventDefault(); // Prevent ghost clicks
+  const handleViewAllClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onViewExpenses(category);
   };
 
   if (budget === 0) {
     return (
-      <div className="category-card empty p-4 shadow-sm" onMouseDown={handleMouseDown} onMouseUp={handleMouseUp} onTouchStart={handleMouseDown} onTouchEnd={handleTouchEnd}>
+      <div className="category-card empty p-4 shadow-sm" onClick={handleCardClick}>
         <span className="category-title">{category}</span>
         <button className="define-budget-cta">Definir orçamento</button>
       </div>
@@ -564,9 +554,15 @@ const CategoryCard = ({ category, budget, spent, onLongPress, onClick }: { categ
   else if (percentage > 70) progressColor = 'var(--warning-color)';
 
   return (
-    <div className="category-card p-4 shadow-sm" onMouseDown={handleMouseDown} onMouseUp={handleMouseUp} onTouchStart={handleMouseDown} onTouchEnd={handleTouchEnd}>
+    <div className={`category-card p-4 shadow-sm ${isExpanded ? 'expanded' : ''}`} onClick={handleCardClick}>
       <div className="card-header">
         <span className="category-title">{category}</span>
+        <button onClick={handleEditClick} className="edit-button" aria-label="Editar categoria">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+          </svg>
+        </button>
       </div>
       <div className="progress-bar-container">
         <div className="progress-bar">
@@ -582,6 +578,23 @@ const CategoryCard = ({ category, budget, spent, onLongPress, onClick }: { categ
           <span className="chip remaining">Ainda tem {formatCurrency(remaining)}</span>
         )}
       </div>
+      
+      {isExpanded && expenses && expenses.length > 0 && (
+        <div className="expanded-content">
+          <div className="expenses-list">
+            <h4>Últimos lançamentos:</h4>
+            {expenses.slice(-5).map((expense, index) => (
+              <div key={index} className="expense-item">
+                <span className="expense-description">{expense.description || 'Sem descrição'}</span>
+                <span className="expense-amount">{formatCurrency(expense.amount)}</span>
+              </div>
+            ))}
+          </div>
+          <button onClick={handleViewAllClick} className="view-all-button">
+            Ver todos os lançamentos
+          </button>
+        </div>
+      )}
     </div>
   );
 };
@@ -625,7 +638,15 @@ const SummaryView = ({ budgets, expenses, viewedMonth, onAddCategory, onEditCate
       )}
       <div className="category-cards-container gap-3">
         {budgetKeys.map(category => (
-          <CategoryCard key={category} category={category} budget={budgets[category]} spent={calculateSpentPerCategory(category)} onLongPress={onEditCategory} onClick={onCategoryClick} />
+          <CategoryCard 
+            key={category} 
+            category={category} 
+            budget={budgets[category]} 
+            spent={calculateSpentPerCategory(category)} 
+            onEdit={onEditCategory} 
+            onViewExpenses={onCategoryClick} 
+            expenses={expenses.filter(e => e.category.toLowerCase() === category.toLowerCase())}
+          />
         ))}
         <AddCategoryCard onClick={onAddCategory} />
       </div>
@@ -1328,7 +1349,6 @@ Nova mensagem do usuário: "${userInput}"
         };
 
         await applyAddExpensePayload(payload);
-        setChatHistory(prev => [...prev, { role: 'model', text: `Ok! Lancei ${installmentCount}x a partir deste mês em ${formData.category}.` }]);
       } else {
         const amount = parseFloat(formData.amount.replace(',', '.'));
         const payload: AddExpensePayload = {
@@ -1339,7 +1359,6 @@ Nova mensagem do usuário: "${userInput}"
           }]
         };
         await applyAddExpensePayload(payload);
-        setChatHistory(prev => [...prev, { role: 'model', text: `Lancei ${formatCurrency(amount, true)} em ${formData.category}.` }]);
       }
 
       setIsExpenseFormOpen(false);
@@ -1463,20 +1482,18 @@ Nova mensagem do usuário: "${userInput}"
             }]
           };
 
-          await applyAddExpensePayload(payload);
-          setChatHistory(prev => [...prev, { role: 'model', text: `Ok! Lancei ${installmentCount}x a partir deste mês em ${localFormData.category}.` }]);
-        } else {
-          const amount = parseFloat(localFormData.amount.replace(',', '.'));
-          const payload: AddExpensePayload = {
-            expenses: [{
-              category: localFormData.category,
-              description: localFormData.description || undefined,
-              amount
-            }]
-          };
-          await applyAddExpensePayload(payload);
-          setChatHistory(prev => [...prev, { role: 'model', text: `Lancei ${formatCurrency(amount, true)} em ${localFormData.category}.` }]);
-        }
+        await applyAddExpensePayload(payload);
+      } else {
+        const amount = parseFloat(localFormData.amount.replace(',', '.'));
+        const payload: AddExpensePayload = {
+          expenses: [{
+            category: localFormData.category,
+            description: localFormData.description || undefined,
+            amount
+          }]
+        };
+        await applyAddExpensePayload(payload);
+      }
 
         setIsExpenseFormOpen(false);
         setFormData({
