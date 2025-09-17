@@ -1298,14 +1298,8 @@ Nova mensagem do usuário: "${userInput}"
     const checked = (e.target as HTMLInputElement).checked;
 
     if (name === 'amount') {
-      let formattedValue = value.replace(/[^0-9,]/g, '');
-      const parts = formattedValue.split(',');
-      if (parts.length > 2) {
-        formattedValue = parts[0] + ',' + parts.slice(1).join('');
-      }
-      if (parts[1] && parts[1].length > 2) {
-        formattedValue = parts[0] + ',' + parts[1].substring(0, 2);
-      }
+      // Apenas permite números e vírgula, mantendo o foco no campo
+      const formattedValue = value.replace(/[^0-9,]/g, '');
       setFormData(prev => ({ ...prev, [name]: formattedValue }));
     } else {
       setFormData(prev => ({ ...prev, [name]: type === 'checkbox' ? checked : value }));
@@ -1427,108 +1421,184 @@ Nova mensagem do usuário: "${userInput}"
     }
   };
 
-  const AddExpenseForm = () => (
-    <div className="modal-overlay">
-      <div className="modal-content">
-        <h2>Adicionar Lançamento</h2>
-        <form onSubmit={handleFormSubmit}>
-          <div className="form-group">
-            <label htmlFor="date">Data:</label>
-            <input
-              type="date"
-              id="date"
-              name="date"
-              value={formData.date}
-              onChange={handleFormChange}
-              required
-              disabled={isFormSubmitting}
-            />
-          </div>
+  const AddExpenseForm = () => {
+    const descriptionRef = useRef<HTMLInputElement>(null);
+    const amountRef = useRef<HTMLInputElement>(null);
+    const [localFormData, setLocalFormData] = useState(formData);
 
-          <div className="form-group">
-            <label htmlFor="category">Categoria:</label>
-            <select
-              id="category"
-              name="category"
-              value={formData.category}
-              onChange={handleFormChange}
-              required
-              disabled={isFormSubmitting}
-            >
-              <option value="">Selecione uma categoria</option>
-              {Object.keys(budgets).map(category => (
-                <option key={category} value={category}>{category}</option>
-              ))}
-            </select>
-          </div>
+    const handleLocalFormChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+      const { name, value, type } = e.target;
+      const checked = (e.target as HTMLInputElement).checked;
 
-          <div className="form-group">
-            <label htmlFor="description">Descrição:</label>
-            <input
-              type="text"
-              id="description"
-              name="description"
-              value={formData.description}
-              onChange={handleFormChange}
-              placeholder="Descreva o lançamento (opcional)"
-              disabled={isFormSubmitting}
-            />
-          </div>
+      if (name === 'amount') {
+        // Apenas permite números e vírgula, mantendo o foco no campo
+        const formattedValue = value.replace(/[^0-9,]/g, '');
+        setLocalFormData(prev => ({ ...prev, [name]: formattedValue }));
+      } else {
+        setLocalFormData(prev => ({ ...prev, [name]: type === 'checkbox' ? checked : value }));
+      }
+    };
 
-          <div className="form-group">
-            <label htmlFor="amount">Valor (R$):</label>
-            <input
-              type="text"
-              id="amount"
-              name="amount"
-              value={formData.amount}
-              onChange={handleFormChange}
-              placeholder="0,00"
-              required
-              disabled={isFormSubmitting}
-            />
-          </div>
+    const handleLocalSubmit = async (e: React.FormEvent) => {
+      e.preventDefault();
+      setIsFormSubmitting(true);
+      try {
+        // Atualiza o formData principal com os valores locais
+        setFormData(localFormData);
+        
+        if (localFormData.isInstallment) {
+          const installmentCount = parseInt(localFormData.installmentCount);
+          const total = parseFloat(localFormData.amount.replace(',', '.'));
 
-          <div className="form-group checkbox-group">
-            <input
-              type="checkbox"
-              id="isInstallment"
-              name="isInstallment"
-              checked={formData.isInstallment}
-              onChange={handleFormChange}
-              disabled={isFormSubmitting}
-            />
-            <label htmlFor="isInstallment">Lançamento parcelado</label>
-          </div>
+          const payload: AddExpensePayload = {
+            expenses: [{
+              category: localFormData.category,
+              description: localFormData.description || undefined,
+              installments: {
+                count: installmentCount,
+                totalAmount: total,
+                baseMonth: 'viewed',
+                startOffsetMonths: 0
+              }
+            }]
+          };
 
-          {formData.isInstallment && (
+          await applyAddExpensePayload(payload);
+          setChatHistory(prev => [...prev, { role: 'model', text: `Ok! Lancei ${installmentCount}x a partir deste mês em ${localFormData.category}.` }]);
+        } else {
+          const amount = parseFloat(localFormData.amount.replace(',', '.'));
+          const payload: AddExpensePayload = {
+            expenses: [{
+              category: localFormData.category,
+              description: localFormData.description || undefined,
+              amount
+            }]
+          };
+          await applyAddExpensePayload(payload);
+          setChatHistory(prev => [...prev, { role: 'model', text: `Lancei ${formatCurrency(amount, true)} em ${localFormData.category}.` }]);
+        }
+
+        setIsExpenseFormOpen(false);
+        setFormData({
+          date: new Date().toISOString().split('T')[0],
+          description: '',
+          category: '',
+          amount: '',
+          isInstallment: false,
+          installmentCount: '1'
+        });
+      } catch (error) {
+        console.error("Error submitting form:", error);
+      } finally {
+        setIsFormSubmitting(false);
+      }
+    };
+
+    return (
+      <div className="modal-overlay">
+        <div className="modal-content">
+          <h2>Adicionar Lançamento</h2>
+          <form onSubmit={handleLocalSubmit}>
             <div className="form-group">
-              <label htmlFor="installmentCount">Número de parcelas:</label>
+              <label htmlFor="date">Data:</label>
+              <input
+                type="date"
+                id="date"
+                name="date"
+                value={localFormData.date}
+                onChange={handleLocalFormChange}
+                required
+                disabled={isFormSubmitting}
+              />
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="category">Categoria:</label>
               <select
-                id="installmentCount"
-                name="installmentCount"
-                value={formData.installmentCount}
-                onChange={handleFormChange}
+                id="category"
+                name="category"
+                value={localFormData.category}
+                onChange={handleLocalFormChange}
                 required
                 disabled={isFormSubmitting}
               >
-                {[...Array(24)].map((_, i) => (
-                  <option key={i + 1} value={i + 1}>{i + 1}</option>
+                <option value="">Selecione uma categoria</option>
+                {Object.keys(budgets).map(category => (
+                  <option key={category} value={category}>{category}</option>
                 ))}
               </select>
             </div>
-          )}
 
-          <div className="form-actions">
-            <button type="button" onClick={() => setIsExpenseFormOpen(false)} disabled={isFormSubmitting}>Cancelar</button>
-            <button type="submit" disabled={isFormSubmitting}>
-              {isFormSubmitting ? "Adicionando..." : "Adicionar"}
-            </button>
-          </div>
-        </form>
+            <div className="form-group">
+              <label htmlFor="description">Descrição:</label>
+              <input
+                type="text"
+                id="description"
+                name="description"
+                ref={descriptionRef}
+                value={localFormData.description}
+                onChange={handleLocalFormChange}
+                placeholder="Descreva o lançamento (opcional)"
+                disabled={isFormSubmitting}
+              />
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="amount">Valor (R$):</label>
+              <input
+                type="text"
+                id="amount"
+                name="amount"
+                ref={amountRef}
+                value={localFormData.amount}
+                onChange={handleLocalFormChange}
+                placeholder="0,00"
+                required
+                disabled={isFormSubmitting}
+              />
+            </div>
+
+            <div className="form-group checkbox-group">
+              <input
+                type="checkbox"
+                id="isInstallment"
+                name="isInstallment"
+                checked={localFormData.isInstallment}
+                onChange={handleLocalFormChange}
+                disabled={isFormSubmitting}
+              />
+              <label htmlFor="isInstallment">Lançamento parcelado</label>
+            </div>
+
+            {localFormData.isInstallment && (
+              <div className="form-group">
+                <label htmlFor="installmentCount">Número de parcelas:</label>
+                <select
+                  id="installmentCount"
+                  name="installmentCount"
+                  value={localFormData.installmentCount}
+                  onChange={handleLocalFormChange}
+                  required
+                  disabled={isFormSubmitting}
+                >
+                  {[...Array(24)].map((_, i) => (
+                    <option key={i + 1} value={i + 1}>{i + 1}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div className="form-actions">
+              <button type="button" onClick={() => setIsExpenseFormOpen(false)} disabled={isFormSubmitting}>Cancelar</button>
+              <button type="submit" disabled={isFormSubmitting}>
+                {isFormSubmitting ? "Adicionando..." : "Adicionar"}
+              </button>
+            </div>
+          </form>
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const CategoryForm = ({
     isOpen,
